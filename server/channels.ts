@@ -13,6 +13,8 @@ export interface ChannelGate {
 }
 
 const MEMBER = new Set(['creator', 'administrator', 'member']);
+const memberCache = new Map<string, { ok: boolean; at: number }>();
+const MEMBER_TTL_MS = 60_000;
 
 export function welcomeComment(): string {
   return (process.env.WELCOME_COMMENT || 'Play fair, trade bold, and may the best tycoon win.').trim();
@@ -93,11 +95,14 @@ export async function channelGate(userId: number): Promise<ChannelGate | null> {
 }
 
 async function isMember(token: string, chatId: string, userId: number): Promise<boolean> {
+  const key = `${chatId}:${userId}`;
+  const cached = memberCache.get(key);
+  if (cached && Date.now() - cached.at < MEMBER_TTL_MS) return cached.ok;
   try {
     const url =
       `https://api.telegram.org/bot${token}/getChatMember` +
       `?chat_id=${encodeURIComponent(chatId)}&user_id=${userId}`;
-    const res = await fetch(url);
+    const res = await fetch(url, { signal: AbortSignal.timeout(4000) });
     const data = (await res.json()) as {
       ok?: boolean;
       description?: string;
@@ -105,10 +110,12 @@ async function isMember(token: string, chatId: string, userId: number): Promise<
     };
     if (!data.ok || !data.result?.status) {
       console.error('getChatMember', chatId, data.description || res.status);
+      memberCache.set(key, { ok: false, at: Date.now() });
       return false;
     }
-    if (data.result.status === 'restricted') return data.result.is_member !== false;
-    return MEMBER.has(data.result.status);
+    const ok = data.result.status === 'restricted' ? data.result.is_member !== false : MEMBER.has(data.result.status);
+    memberCache.set(key, { ok, at: Date.now() });
+    return ok;
   } catch (e) {
     console.error('getChatMember', chatId, e);
     return false;

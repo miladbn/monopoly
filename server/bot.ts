@@ -267,7 +267,15 @@ function bot(): Bot {
 
 export async function handleTelegramWebhook(update: unknown): Promise<void> {
   const b = bot();
-  if (!profileOnce) profileOnce = publishProfile(b);
+  if (!profileOnce) {
+    profileOnce = (async () => {
+      await b.init();
+      await publishProfile(b);
+    })().catch((e) => {
+      profileOnce = null;
+      throw e;
+    });
+  }
   await profileOnce;
   await b.handleUpdate(update as never);
 }

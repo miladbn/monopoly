@@ -47,14 +47,18 @@ export function useMultiplayerGame(initialRoomId?: string) {
     setError(null);
   }, []);
 
+  const polling = useRef(false);
   const refresh = useCallback(async () => {
     const id = roomIdRef.current;
-    if (!id) return;
+    if (!id || polling.current) return;
+    polling.current = true;
     try {
       const r = await fetchRoom(id);
       if (r.version >= versionRef.current) applyRoom(r);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Poll failed');
+    } finally {
+      polling.current = false;
     }
   }, [applyRoom]);
 

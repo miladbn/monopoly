@@ -129,11 +129,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       } catch {
         /* optional on poll */
       }
-      if (telegramId !== undefined) {
-        const { channelGate } = await import('../server-bundle/channels.js');
-        const gate = await channelGate(telegramId);
-        if (gate) return json(res, 403, gate);
-      }
       return json(res, 200, { room: publicRoom(room, telegramId) });
     }
 
