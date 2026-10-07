@@ -1,5 +1,13 @@
-import { useState } from 'react';
-import { inviteUrl, roomCodeFromInput, type PublicRoom } from '../telegram/api';
+import { useEffect, useState } from 'react';
+import {
+  inviteUrl,
+  roomCodeFromInput,
+  type PlayerAppearance,
+  type PublicRoom,
+} from '../telegram/api';
+import { loadPlayerProfile, savePlayerProfile } from '../game/playerProfile';
+import { getWebApp } from '../telegram/webapp';
+import PlayerAppearancePicker from './PlayerAppearancePicker';
 import { Modal } from './Overlays';
 
 export default function LobbyOverlay({
@@ -13,6 +21,7 @@ export default function LobbyOverlay({
   onLeave,
   onCreate,
   onJoin,
+  onAppearance,
 }: {
   room: PublicRoom | null;
   busy: boolean;
@@ -24,39 +33,67 @@ export default function LobbyOverlay({
   onLeave: () => void;
   onCreate: () => void;
   onJoin: (code: string) => void;
+  onAppearance?: (appearance: PlayerAppearance) => void;
 }) {
   const [code, setCode] = useState('');
   const [copied, setCopied] = useState<'code' | 'link' | null>(null);
+  const [appearance, setAppearance] = useState(loadPlayerProfile);
+
+  useEffect(() => {
+    if (!room) return;
+    const me = room.players.find((p) => p.telegramId === getWebApp()?.initDataUnsafe?.user?.id);
+    if (me?.pieceToken && me?.pieceColor) {
+      setAppearance({ token: me.pieceToken, color: me.pieceColor });
+    }
+  }, [room?.id, room?.version]);
+
+  const setLook = (next: PlayerAppearance) => {
+    setAppearance(next);
+    savePlayerProfile(next);
+    onAppearance?.(next);
+  };
 
   if (!room) {
     return (
       <Modal dim={0.9}>
-        <div className="popin panel w-full max-w-md rounded-2xl p-5">
-          <div className="text-center">
-            <div className="deco text-3xl font-bold gold-text">TELEGRAM LOBBY</div>
-            <div className="mt-1 text-[11px] tracking-widest text-amber-200/50">PLAY WITH FRIENDS</div>
+        <div className="popin panel step-frame scroll relative max-h-[92dvh] w-full max-w-md overflow-y-auto rounded-xl p-4 sm:p-6">
+          <div className="sunburst" aria-hidden />
+          <div className="relative text-center">
+            <h1 className="deco brand-in text-3xl font-bold gold-text">Lobby</h1>
+            <p className="mt-2 text-[13px] text-[var(--mist)]">Pick your look, then create or join a room.</p>
           </div>
-          {error && <div className="mt-3 rounded-lg bg-red-500/15 px-3 py-2 text-[12px] text-red-200">{error}</div>}
-          <div className="mt-5 space-y-2">
-            <button disabled={busy} onClick={onCreate} className="btn btn-gold w-full py-3 deco">
-              {busy ? '…' : 'CREATE ROOM'}
+          {error && (
+            <div className="relative mt-4 rounded-lg bg-[var(--wine)]/25 px-3 py-2 text-[12px] text-[#f0b4bb]">{error}</div>
+          )}
+          <div className="relative mt-4">
+            <PlayerAppearancePicker value={appearance} onChange={setLook} compact />
+          </div>
+          <div className="relative mt-5 space-y-2">
+            <button type="button" disabled={busy} onClick={onCreate} className="btn btn-gold w-full py-3.5 text-base">
+              {busy ? 'Creating…' : 'Create room'}
             </button>
             <div className="flex gap-2">
               <input
                 value={code}
                 onChange={(e) => setCode(roomCodeFromInput(e.target.value))}
-                placeholder="ROOM CODE"
+                placeholder="Room code"
                 inputMode="text"
                 autoCapitalize="characters"
                 spellCheck={false}
-                className="flex-1 rounded-lg border border-amber-300/20 bg-black/40 px-3 py-2 text-sm tracking-widest text-amber-50 outline-none"
+                aria-label="Room code"
+                className="field flex-1 tracking-[0.18em]"
               />
-              <button disabled={busy || code.length < 4} onClick={() => onJoin(code)} className="btn btn-dark px-4">
-                JOIN
+              <button
+                type="button"
+                disabled={busy || code.length < 4}
+                onClick={() => onJoin(code)}
+                className="btn btn-dark min-w-[72px] px-4"
+              >
+                Join
               </button>
             </div>
-            <button onClick={onLeave} className="btn btn-dark w-full py-2 text-xs">
-              BACK / SOLO
+            <button type="button" onClick={onLeave} className="btn btn-dark w-full py-3 text-sm">
+              Back to solo
             </button>
           </div>
         </div>
@@ -85,48 +122,72 @@ export default function LobbyOverlay({
 
   return (
     <Modal dim={0.9}>
-      <div className="popin panel w-full max-w-md rounded-2xl p-5">
+      <div className="popin panel scroll max-h-[92dvh] w-full max-w-md overflow-y-auto rounded-xl p-4 sm:p-6">
         <div className="text-center">
-          <div className="deco text-3xl font-bold gold-text">ROOM {room.id}</div>
-          <div className="mt-1 text-[11px] text-slate-400">
-            {room.players.length}/{room.maxPlayers} players · AI fills empty seats
-          </div>
+          <h1 className="deco text-3xl font-bold gold-text">Room {room.id}</h1>
+          <p className="mt-2 text-[13px] text-[var(--mist)]">
+            {room.players.length}/{room.maxPlayers} players · empty seats fill with AI
+          </p>
         </div>
 
-        {error && <div className="mt-3 rounded-lg bg-red-500/15 px-3 py-2 text-[12px] text-red-200">{error}</div>}
+        {error && (
+          <div className="mt-4 rounded-lg bg-[var(--wine)]/25 px-3 py-2 text-[12px] text-[#f0b4bb]">{error}</div>
+        )}
 
         <div className="mt-4 space-y-1.5">
           {room.players.map((p) => (
-            <div key={p.telegramId} className="flex items-center gap-2 rounded-lg bg-white/5 px-3 py-2 text-sm">
-              <span className="flex-1 truncate font-semibold">
-                {p.name}
-                {p.telegramId === room.hostTelegramId ? ' · host' : ''}
+            <div key={p.telegramId} className="flex items-center gap-2 rounded-lg bg-black/25 px-3 py-2.5 text-sm">
+              <span
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-base"
+                style={{
+                  background: `${p.pieceColor || '#c9a84c'}33`,
+                  boxShadow: `0 0 0 1.5px ${p.pieceColor || '#c9a84c'}`,
+                }}
+                aria-hidden
+              >
+                {p.pieceToken || '🎩'}
               </span>
-              <span className={p.ready ? 'text-emerald-300' : 'text-slate-500'}>{p.ready ? 'READY' : '…'}</span>
+              <span className="min-w-0 flex-1 truncate font-semibold">
+                {p.name}
+                {p.telegramId === room.hostTelegramId ? (
+                  <span className="ml-1.5 text-[11px] font-medium text-[var(--brass)]">host</span>
+                ) : null}
+              </span>
+              <span className={`text-[12px] font-semibold ${p.ready ? 'text-emerald-300/90' : 'text-[var(--mist)]'}`}>
+                {p.ready ? 'Ready' : 'Waiting'}
+              </span>
             </div>
           ))}
         </div>
 
+        <div className="mt-4 border-t border-[var(--brass)]/15 pt-4">
+          <PlayerAppearancePicker value={appearance} onChange={setLook} compact />
+        </div>
+
         <div className="mt-4 grid grid-cols-2 gap-2">
-          <button onClick={() => void copy('code')} className="btn btn-dark py-2 text-xs">
-            {copied === 'code' ? 'COPIED' : 'COPY CODE'}
+          <button type="button" onClick={() => void copy('code')} className="btn btn-dark py-3 text-sm">
+            {copied === 'code' ? 'Copied' : 'Copy code'}
           </button>
-          <button onClick={() => void copy('link')} className="btn btn-dark py-2 text-xs">
-            {copied === 'link' ? 'COPIED' : 'COPY LINK'}
+          <button type="button" onClick={() => void copy('link')} className="btn btn-dark py-3 text-sm">
+            {copied === 'link' ? 'Copied' : 'Copy link'}
           </button>
         </div>
-        <button onClick={() => onReady(!meReady)} className={`btn mt-2 w-full py-2 text-xs ${meReady ? 'btn-dark' : 'btn-gold'}`}>
-          {meReady ? 'UNREADY' : 'READY'}
+        <button
+          type="button"
+          onClick={() => onReady(!meReady)}
+          className={`btn mt-2 w-full py-3 text-sm ${meReady ? 'btn-dark' : 'btn-gold'}`}
+        >
+          {meReady ? 'Not ready' : 'Ready up'}
         </button>
 
         {isHost && (
-          <button disabled={busy} onClick={onStart} className="btn btn-gold pulse-glow mt-3 w-full py-3 deco">
-            {busy ? 'STARTING…' : 'START GAME'}
+          <button type="button" disabled={busy} onClick={onStart} className="btn btn-gold pulse-glow mt-3 w-full py-3.5 text-base">
+            {busy ? 'Starting…' : 'Start game'}
           </button>
         )}
 
-        <button onClick={onLeave} className="btn btn-dark mt-2 w-full py-2 text-xs">
-          LEAVE
+        <button type="button" onClick={onLeave} className="btn btn-dark mt-2 w-full py-3 text-sm">
+          Leave room
         </button>
       </div>
     </Modal>

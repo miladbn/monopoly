@@ -2,6 +2,8 @@ export interface RoomPlayer {
   telegramId: number;
   name: string;
   avatar?: string;
+  pieceToken?: string;
+  pieceColor?: string;
   ready: boolean;
   seat: number;
 }

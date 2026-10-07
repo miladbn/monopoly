@@ -5,12 +5,15 @@ import {
   joinRoom,
   roomCodeFromInput,
   sendAction,
+  setPlayerAppearance,
   setReady,
   startRoom,
+  type PlayerAppearance,
   type PublicRoom,
 } from '../telegram/api';
 import { getInitData, isTelegram } from '../telegram/webapp';
 import { Game, newGame } from './engine';
+import { loadPlayerProfile, savePlayerProfile } from './playerProfile';
 import type { MpActionType } from './mpEngine';
 import type { HighScore } from './useGame';
 
@@ -35,6 +38,7 @@ export function useMultiplayerGame(initialRoomId?: string) {
   const roomIdRef = useRef<string | null>(initialRoomId || null);
   const versionRef = useRef(0);
   const acting = useRef(false);
+  const profileRef = useRef<PlayerAppearance>(loadPlayerProfile());
 
   const g: Game = room?.game && (room.status === 'playing' || room.status === 'ended') ? room.game : emptyGame();
   if (room?.status === 'playing' || room?.status === 'ended') {
@@ -70,7 +74,7 @@ export function useMultiplayerGame(initialRoomId?: string) {
       setBusy(true);
       try {
         if (getInitData()) {
-          const r = await joinRoom(initialRoomId);
+          const r = await joinRoom(initialRoomId, profileRef.current);
           if (!cancelled) applyRoom(r);
         } else {
           const r = await fetchRoom(initialRoomId);
@@ -100,7 +104,7 @@ export function useMultiplayerGame(initialRoomId?: string) {
     setError(null);
     try {
       ensureAuth();
-      applyRoom(await createRoom());
+      applyRoom(await createRoom(profileRef.current));
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Create failed');
     } finally {
@@ -114,7 +118,7 @@ export function useMultiplayerGame(initialRoomId?: string) {
       setError(null);
       try {
         ensureAuth();
-        applyRoom(await joinRoom(roomCodeFromInput(id)));
+        applyRoom(await joinRoom(roomCodeFromInput(id), profileRef.current));
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Join failed');
       } finally {
@@ -168,6 +172,22 @@ export function useMultiplayerGame(initialRoomId?: string) {
     setError(null);
   }, []);
 
+  const syncAppearance = useCallback(
+    async (appearance: PlayerAppearance) => {
+      profileRef.current = appearance;
+      savePlayerProfile(appearance);
+      const id = roomIdRef.current || room?.id;
+      if (!id || room?.status !== 'lobby') return;
+      try {
+        ensureAuth();
+        applyRoom(await setPlayerAppearance(id, appearance));
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Could not save look');
+      }
+    },
+    [applyRoom, room?.id, room?.status],
+  );
+
   const act = useCallback(
     async (type: MpActionType, payload?: unknown) => {
       if (!roomIdRef.current || acting.current) return;
@@ -202,7 +222,7 @@ export function useMultiplayerGame(initialRoomId?: string) {
   const proposeTrade = useCallback(() => ({ ok: false as const, msg: 'Trades coming soon in multiplayer.' }), []);
   const noop = useCallback(() => undefined, []);
   const setSpeed = useCallback((_v: number) => undefined, []);
-  const startSolo = useCallback((_name: string, _opp: number) => undefined, []);
+  const startSolo = useCallback((_name: string, _opp: number, _look?: PlayerAppearance) => undefined, []);
 
   return {
     room,
@@ -217,6 +237,7 @@ export function useMultiplayerGame(initialRoomId?: string) {
     ready,
     startMatch,
     leaveLobby,
+    syncAppearance,
     build,
     sellHouse,
     mortgage,

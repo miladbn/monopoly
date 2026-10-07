@@ -97,6 +97,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const gate = await channelGate(user.id);
     if (gate) return json(res, 403, gate);
     const hostName = displayName(user);
+    const pieceToken = typeof body.pieceToken === 'string' ? body.pieceToken : undefined;
+    const pieceColor = typeof body.pieceColor === 'string' ? body.pieceColor : undefined;
     const id = roomId();
     const room = {
       id,
@@ -106,6 +108,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           telegramId: user.id,
           name: hostName,
           avatar: user.photo_url,
+          pieceToken,
+          pieceColor,
           ready: true,
           seat: 0,
         },

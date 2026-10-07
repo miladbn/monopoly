@@ -18,6 +18,7 @@ import TradeOverlay from './components/TradeOverlay';
 import { SPACES } from './game/data';
 import { money, netWorth } from './game/engine';
 import { fx } from './game/fx';
+import { loadPlayerProfile, type PlayerAppearance } from './game/playerProfile';
 import { sfx } from './game/sfx';
 import { useGame } from './game/useGame';
 import { useMultiplayerGame } from './game/useMultiplayerGame';
@@ -55,7 +56,11 @@ export default function App() {
   const [tab, setTab] = useState<'log' | 'deeds'>('log');
   const [inspect, setInspect] = useState<number | null>(null);
   const [trade, setTrade] = useState(false);
-  const cfg = useRef({ name: telegramDisplayName(), opp: 3 });
+  const cfg = useRef<{ name: string; opp: number; look: PlayerAppearance }>({
+    name: telegramDisplayName(),
+    opp: 3,
+    look: loadPlayerProfile(),
+  });
   const [muted, setMuted] = useState(sfx.muted);
   const [reportOpen, setReportOpen] = useState(false);
   const [report, setReport] = useState<BotReport | null>(null);
@@ -125,7 +130,9 @@ export default function App() {
     if (!el) return;
     const measure = () => {
       const r = el.getBoundingClientRect();
-      setBoardSize(Math.max(240, Math.floor(Math.min(r.width, r.height))));
+      const minSide = Math.min(r.width, r.height);
+      // Never force the board larger than its stage — that overflowed on phones.
+      setBoardSize(Math.max(180, Math.floor(minSide)));
     };
     const ro = new ResizeObserver(measure);
     ro.observe(el);
@@ -168,7 +175,7 @@ export default function App() {
 
   const restart = useCallback(() => {
     if (mode === 'mp') return;
-    solo.start(cfg.current.name, cfg.current.opp);
+    solo.start(cfg.current.name, cfg.current.opp, cfg.current.look);
   }, [mode, solo]);
 
   useEffect(() => {
@@ -206,14 +213,14 @@ export default function App() {
     if (g.phase === 'roll' && myTurn && g.jailChoice) {
       return (
         <div className="grid grid-cols-3 gap-2">
-          <button className="btn btn-gold py-3 text-xs" disabled={!me || me.cash < 50} onClick={() => respond('jail', 'pay')}>
-            PAY $50
+          <button type="button" className="btn btn-gold min-h-[44px] py-2.5 text-xs" disabled={!me || me.cash < 50} onClick={() => respond('jail', 'pay')}>
+            Pay $50
           </button>
-          <button className="btn btn-dark py-3 text-xs" disabled={!me || me.getOut < 1} onClick={() => respond('jail', 'card')}>
-            USE CARD
+          <button type="button" className="btn btn-dark min-h-[44px] py-2.5 text-xs" disabled={!me || me.getOut < 1} onClick={() => respond('jail', 'card')}>
+            Use card
           </button>
-          <button className="btn btn-green py-3 text-xs" onClick={() => respond('jail', 'roll')}>
-            ROLL DOUBLES
+          <button type="button" className="btn btn-green min-h-[44px] py-2.5 text-xs" onClick={() => respond('jail', 'roll')}>
+            Roll doubles
           </button>
         </div>
       );
@@ -221,12 +228,12 @@ export default function App() {
     if (g.phase === 'roll' && myTurn) {
       return (
         <div className="flex gap-2">
-          <button className="btn btn-gold pulse-glow flex-1 py-4 text-lg deco" onClick={() => respond('roll', true)}>
-            🎲 ROLL <span className="text-xs opacity-60">(SPACE)</span>
+          <button type="button" className="btn btn-gold pulse-glow min-h-[48px] flex-1 py-2.5 text-base sm:min-h-[52px] sm:py-4 sm:text-lg" onClick={() => respond('roll', true)}>
+            Roll dice
           </button>
           {mode !== 'mp' && (
-            <button className="btn btn-dark px-3 py-4 text-xs" onClick={() => setTrade(true)}>
-              🤝
+            <button type="button" className="btn btn-dark min-h-[48px] px-3 py-2.5 text-xs sm:min-h-[52px] sm:py-4" onClick={() => setTrade(true)} aria-label="Trade">
+              Trade
             </button>
           )}
         </div>
@@ -235,15 +242,15 @@ export default function App() {
     if (g.phase === 'manage' && (myTurn || g.turn === meId)) {
       return (
         <div className="flex gap-2">
-          <button className="btn btn-gold flex-1 py-4 text-base deco" onClick={() => respond('endturn', true)}>
-            END TURN <span className="text-xs opacity-60">(E)</span>
+          <button type="button" className="btn btn-gold min-h-[48px] flex-1 py-2.5 text-base sm:min-h-[52px] sm:py-4" onClick={() => respond('endturn', true)}>
+            End turn
           </button>
-          <button className="btn btn-dark px-3 py-4 text-xs" onClick={() => setTab('deeds')}>
-            🏗️
+          <button type="button" className="btn btn-dark min-h-[48px] px-3 py-2.5 text-xs sm:min-h-[52px] sm:py-4" onClick={() => setTab('deeds')} aria-label="Open deeds">
+            Deeds
           </button>
           {mode !== 'mp' && (
-            <button className="btn btn-dark px-3 py-4 text-xs" onClick={() => setTrade(true)}>
-              🤝
+            <button type="button" className="btn btn-dark min-h-[48px] px-3 py-2.5 text-xs sm:min-h-[52px] sm:py-4" onClick={() => setTrade(true)} aria-label="Trade">
+              Trade
             </button>
           )}
         </div>
@@ -251,8 +258,8 @@ export default function App() {
     }
     if (g.phase === 'card' && (mode !== 'mp' || g.turn === meId)) {
       return (
-        <button className="btn btn-gold w-full py-4 deco" onClick={() => respond('ack', true)}>
-          CONTINUE
+        <button type="button" className="btn btn-gold min-h-[48px] w-full py-2.5 sm:min-h-[52px] sm:py-4" onClick={() => respond('ack', true)}>
+          Continue
         </button>
       );
     }
@@ -260,12 +267,12 @@ export default function App() {
       g.phase === 'moving'
         ? 'Moving…'
         : g.phase === 'buy'
-          ? 'Decide: buy or auction'
+          ? 'Choose buy or auction'
           : g.phase === 'auction'
             ? 'Auction in progress'
             : `${g.players[g.turn]?.name ?? ''} is playing…`;
     return (
-      <div className="flex h-[58px] items-center justify-center rounded-lg bg-white/5 text-[12px] font-semibold tracking-wide text-slate-400">
+      <div className="flex min-h-[44px] items-center justify-center rounded-lg bg-black/25 px-2 text-[12px] font-medium text-[var(--mist)] sm:min-h-[48px] sm:text-[13px]">
         {label}
       </div>
     );
@@ -279,37 +286,52 @@ export default function App() {
   };
 
   return (
-    <div className="fixed inset-0 overflow-hidden" style={{ background: 'radial-gradient(circle at 50% 0%, #121c35 0%, #070b16 70%)' }}>
+    <div
+      className="fixed inset-0 overflow-hidden"
+      style={{
+        background:
+          'radial-gradient(ellipse at 50% -10%, #1f4a3d 0%, #0f2a24 42%, #0a1412 78%)',
+      }}
+    >
       <div ref={shakeRef} className="h-full w-full will-change-transform">
-        <div className="flex h-full w-full flex-col gap-2 p-2 landscape:flex-row lg:flex-row">
-          <div className="flex min-h-0 flex-1 flex-col gap-2">
-            <div className="flex items-center justify-between gap-2 px-1">
-              <div className="flex items-baseline gap-2">
-                <span className="deco text-lg font-bold leading-none gold-text sm:text-2xl">DECO CITY</span>
-                <span className="hidden text-[10px] tracking-[0.35em] text-amber-200/40 sm:inline">TYCOON</span>
+        <div
+          className="app-shell flex h-full w-full flex-col gap-1.5 p-1.5 sm:gap-2 sm:p-2 landscape:flex-row lg:flex-row"
+          style={{
+            paddingTop: 'max(0.375rem, env(safe-area-inset-top))',
+            paddingBottom: 'max(0.375rem, env(safe-area-inset-bottom))',
+            paddingLeft: 'max(0.375rem, env(safe-area-inset-left))',
+            paddingRight: 'max(0.375rem, env(safe-area-inset-right))',
+          }}
+        >
+          <div className="flex min-h-0 flex-1 flex-col gap-1.5 sm:gap-2">
+            <div className="flex items-center justify-between gap-1.5 px-0.5 sm:gap-2 sm:px-1">
+              <div className="flex min-w-0 items-baseline gap-1.5 sm:gap-2">
+                <span className="deco shrink-0 text-base font-bold leading-none gold-text sm:text-2xl">Deco City</span>
                 {mode === 'mp' && mp.room && (
-                  <span className="rounded bg-sky-500/20 px-1.5 py-0.5 text-[9px] font-bold tracking-wider text-sky-200">
+                  <span className="truncate rounded-md bg-[var(--brass)]/15 px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-[var(--champagne)]">
                     {mp.room.id}
                   </span>
                 )}
               </div>
-              <div className="flex items-center gap-1.5">
-                <div className="rounded-lg bg-black/40 px-2.5 py-1 text-right leading-tight">
-                  <div className="text-[8px] uppercase tracking-widest text-slate-400">Score</div>
-                  <div className="text-[13px] font-extrabold tabular-nums text-emerald-300">{money(score)}</div>
+              <div className="flex shrink-0 items-center gap-1 sm:gap-1.5">
+                <div className="rounded-lg bg-black/35 px-1.5 py-0.5 text-right leading-tight sm:px-2.5 sm:py-1">
+                  <div className="text-[9px] font-medium text-[var(--mist)] sm:text-[10px]">Score</div>
+                  <div className="text-[12px] font-extrabold tabular-nums text-emerald-300/90 sm:text-[13px]">{money(score)}</div>
                 </div>
                 {mode !== 'mp' && (
                   <button
-                    className="btn btn-dark px-2.5 py-2 text-[11px]"
+                    type="button"
+                    className="btn btn-dark min-h-[36px] px-2 py-1.5 text-[11px] sm:min-h-[40px] sm:px-2.5 sm:py-2"
                     onClick={() => solo.setSpeed(solo.speed === 1 ? 2 : 1)}
                     title="Toggle game speed"
                   >
-                    {solo.speed === 1 ? '⏩ 1×' : '⏩ 2×'}
+                    {solo.speed === 1 ? '1×' : '2×'}
                   </button>
                 )}
                 {access.status === 'ok' && access.admin && (
                   <button
-                    className="btn btn-dark px-2.5 py-2 text-[11px]"
+                    type="button"
+                    className="btn btn-dark hidden min-h-[40px] px-2.5 py-2 text-[11px] sm:inline-flex"
                     onClick={() => {
                       setReportOpen(true);
                       void loadReport();
@@ -320,23 +342,30 @@ export default function App() {
                   </button>
                 )}
                 <button
-                  className="btn btn-dark px-2.5 py-2 text-[11px]"
+                  type="button"
+                  className="btn btn-dark min-h-[36px] px-2 py-1.5 text-[11px] sm:min-h-[40px] sm:px-2.5 sm:py-2"
                   onClick={() => {
                     sfx.unlock();
                     setMuted(sfx.toggle());
                   }}
-                  title="Sound"
+                  title={muted ? 'Unmute' : 'Mute'}
+                  aria-label={muted ? 'Unmute' : 'Mute'}
                 >
-                  {muted ? '🔇' : '🔊'}
+                  {muted ? 'Off' : 'On'}
                 </button>
                 {mode !== 'mp' && (
-                  <button className="btn btn-dark px-3 py-2 text-[11px]" onClick={solo.togglePause}>
-                    ⏸
+                  <button
+                    type="button"
+                    className="btn btn-dark min-h-[36px] px-2 py-1.5 text-[11px] sm:min-h-[40px] sm:px-3 sm:py-2"
+                    onClick={solo.togglePause}
+                    aria-label="Pause"
+                  >
+                    II
                   </button>
                 )}
               </div>
             </div>
-            <div ref={boxRef} className="flex min-h-0 flex-1 items-center justify-center">
+            <div ref={boxRef} className="board-stage flex min-h-0 flex-1 items-center justify-center">
               <div style={{ width: boardSize, height: boardSize }}>
                 <Board g={g} onTile={onTile} onCenter={primary}>
                   <CenterPiece g={g} meId={meId} />
@@ -345,30 +374,33 @@ export default function App() {
             </div>
           </div>
 
-          <aside className="panel flex h-[38vh] w-full shrink-0 flex-col gap-2 rounded-xl p-2 landscape:h-auto landscape:w-[300px] lg:h-auto lg:w-[330px]">
-            <div className="grid grid-cols-2 gap-1 landscape:grid-cols-1 lg:grid-cols-1">
+          <aside className="panel hud-panel flex w-full shrink-0 flex-col gap-1 rounded-xl p-1.5 sm:gap-2 sm:p-2.5 landscape:h-auto landscape:w-[300px] lg:h-auto lg:w-[330px]">
+            <div className="grid shrink-0 grid-cols-2 gap-1 landscape:grid-cols-1 lg:grid-cols-1">
               {g.players.map((p) => (
                 <PlayerCard key={p.id} g={g} pid={p.id} active={g.turn === p.id} />
               ))}
             </div>
 
-            <div className="flex gap-1">
+            <div className="flex shrink-0 gap-1">
               {(['log', 'deeds'] as const).map((t) => (
                 <button
                   key={t}
+                  type="button"
                   onClick={() => setTab(t)}
-                  className={`flex-1 rounded-md py-1 text-[10px] font-bold uppercase tracking-widest transition-colors ${
-                    tab === t ? 'bg-amber-300/20 text-amber-200' : 'bg-white/5 text-slate-500'
+                  className={`min-h-[36px] flex-1 rounded-md py-1 text-[11px] font-semibold transition-colors sm:min-h-[40px] sm:py-1.5 ${
+                    tab === t
+                      ? 'bg-[var(--brass)]/20 text-[var(--champagne)]'
+                      : 'bg-black/20 text-[var(--mist)]'
                   }`}
                 >
                   {t === 'log'
-                    ? 'Ticker'
-                    : `My Deeds (${SPACES.filter((s) => s.price && g.props[s.i].owner === meId).length})`}
+                    ? 'Feed'
+                    : `Deeds (${SPACES.filter((s) => s.price && g.props[s.i].owner === meId).length})`}
                 </button>
               ))}
             </div>
 
-            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            <div className="hud-scroll flex min-h-0 flex-1 flex-col overflow-hidden">
               {tab === 'log' ? (
                 <LogPanel g={g} />
               ) : (
@@ -384,9 +416,9 @@ export default function App() {
               )}
             </div>
 
-            {g.started && actionBar()}
+            {g.started && <div className="action-dock shrink-0">{actionBar()}</div>}
             {mode === 'mp' && mp.error && (
-              <div className="rounded bg-red-500/15 px-2 py-1 text-[10px] text-red-200">{mp.error}</div>
+              <div className="rounded-md bg-[var(--wine)]/25 px-2 py-1.5 text-[11px] text-[#f0b4bb]">{mp.error}</div>
             )}
           </aside>
         </div>
@@ -406,7 +438,8 @@ export default function App() {
 
       {access.status === 'ok' && access.admin && !reportOpen && inLobby && (
         <button
-          className="btn btn-gold fixed bottom-4 right-4 px-3 py-2 text-[11px]"
+          type="button"
+          className="btn btn-gold fixed bottom-4 right-4 px-3 py-2 text-[12px]"
           style={{ zIndex: 55 }}
           onClick={() => {
             setReportOpen(true);
@@ -437,11 +470,11 @@ export default function App() {
             setWantMp(true);
             setMode('mp');
           }}
-          onStart={(name, opp) => {
-            cfg.current = { name, opp };
+          onStart={(name, opp, look) => {
+            cfg.current = { name, opp, look };
             sfx.unlock();
             setMode('solo');
-            solo.start(name, opp);
+            solo.start(name, opp, look);
           }}
         />
       )}
@@ -460,6 +493,7 @@ export default function App() {
           onLeave={goSoloMenu}
           onCreate={() => void mp.hostCreate()}
           onJoin={(code) => void mp.join(code)}
+          onAppearance={(look) => void mp.syncAppearance(look)}
         />
       )}
 

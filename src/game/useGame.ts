@@ -16,6 +16,7 @@ import {
   rentFor,
 } from './engine';
 import { elCenter, fx } from './fx';
+import type { PlayerAppearance } from './playerProfile';
 import { sfx } from './sfx';
 
 class Abort extends Error {}
@@ -814,13 +815,13 @@ export function useGame() {
   }
 
   /* ---------------- public actions ---------------- */
-  const start = useCallback((name: string, opponents: number) => {
+  const start = useCallback((name: string, opponents: number, look?: PlayerAppearance) => {
     gen.current++;
     if (pending.current) pending.current.reject(new Abort());
     chanceDeck.current = shuffled(16);
     chestDeck.current = shuffled(16);
     logId.current = 2;
-    G.current = newGame(name, opponents);
+    G.current = newGame(name, opponents, look);
     paused.current = false;
     setLastScore(null);
     sync();

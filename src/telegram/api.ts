@@ -6,8 +6,20 @@ export interface PublicPlayer {
   telegramId: number;
   name: string;
   avatar?: string;
+  pieceToken?: string;
+  pieceColor?: string;
   ready: boolean;
   seat: number;
+}
+
+export interface PlayerAppearance {
+  token: string;
+  color: string;
+}
+
+function appearanceBody(appearance?: PlayerAppearance) {
+  if (!appearance) return {};
+  return { pieceToken: appearance.token, pieceColor: appearance.color };
 }
 
 export interface PublicRoom {
@@ -59,10 +71,10 @@ async function request<T>(path: string, opts: RequestInit & { initData?: string 
   }
 }
 
-export async function createRoom(): Promise<PublicRoom> {
+export async function createRoom(appearance?: PlayerAppearance): Promise<PublicRoom> {
   const data = await request<{ room: PublicRoom }>('/api/rooms', {
     method: 'POST',
-    body: JSON.stringify({ initData: getInitData() }),
+    body: JSON.stringify({ initData: getInitData(), ...appearanceBody(appearance) }),
   });
   return data.room;
 }
@@ -74,10 +86,28 @@ export async function fetchRoom(id: string): Promise<PublicRoom> {
   return data.room;
 }
 
-export async function joinRoom(id: string): Promise<PublicRoom> {
+export async function joinRoom(id: string, appearance?: PlayerAppearance): Promise<PublicRoom> {
   const data = await request<{ room: PublicRoom }>('/api/room', {
     method: 'POST',
-    body: JSON.stringify({ action: 'join', roomId: id.trim().toUpperCase(), initData: getInitData() }),
+    body: JSON.stringify({
+      action: 'join',
+      roomId: id.trim().toUpperCase(),
+      initData: getInitData(),
+      ...appearanceBody(appearance),
+    }),
+  });
+  return data.room;
+}
+
+export async function setPlayerAppearance(id: string, appearance: PlayerAppearance): Promise<PublicRoom> {
+  const data = await request<{ room: PublicRoom }>('/api/room', {
+    method: 'POST',
+    body: JSON.stringify({
+      action: 'appearance',
+      roomId: id,
+      initData: getInitData(),
+      ...appearanceBody(appearance),
+    }),
   });
   return data.room;
 }

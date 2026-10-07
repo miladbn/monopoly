@@ -687,7 +687,10 @@ function performRoll(rt: MpRuntime, p: Player) {
   resolveLanding(rt, p, d[0] + d[1]);
 }
 
-export function createRuntime(seats: { name: string; human: boolean }[], seed?: number): MpRuntime {
+export function createRuntime(
+  seats: { name: string; human: boolean; token?: string; color?: string }[],
+  seed?: number,
+): MpRuntime {
   const s = seed ?? (Date.now() ^ (Math.random() * 1e9)) | 0;
   const rng = makeRng(s);
   let calls = 0;

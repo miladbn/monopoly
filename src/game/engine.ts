@@ -1,4 +1,5 @@
-import { GROUP_MEMBERS, RR_RENT, SPACES, TOKENS } from './data';
+import { GROUP_MEMBERS, RR_RENT, SPACES } from './data';
+import { buildSoloSeats, type PlayerAppearance, type SeatSpec } from './playerProfile';
 
 export interface Player {
   id: number;
@@ -75,13 +76,13 @@ function emptyProps(): Record<number, PropState> {
   return props;
 }
 
-export function newGame(humanName: string, opponents: number): Game {
-  const players: Player[] = TOKENS.slice(0, opponents + 1).map((t, i) => ({
+function playersFromSeats(seats: SeatSpec[]): Player[] {
+  return seats.map((s, i) => ({
     id: i,
-    name: i === 0 ? humanName || 'You' : t.name,
-    token: t.token,
-    color: t.color,
-    human: i === 0,
+    name: s.name,
+    token: s.token!,
+    color: s.color!,
+    human: s.human,
     cash: 1500,
     pos: 0,
     inJail: false,
@@ -90,6 +91,11 @@ export function newGame(humanName: string, opponents: number): Game {
     bankrupt: false,
     netPeak: 1500,
   }));
+}
+
+export function newGame(humanName: string, opponents: number, humanLook?: PlayerAppearance): Game {
+  const seats = buildSoloSeats(humanName, opponents, humanLook || { token: '🎩', color: '#c9a84c' });
+  const players = playersFromSeats(seats);
   return {
     players,
     props: emptyProps(),
@@ -112,22 +118,8 @@ export function newGame(humanName: string, opponents: number): Game {
 }
 
 /** Build a multiplayer match: each entry is a human or AI seat (2–4 total). */
-export function newMultiplayerGame(seats: { name: string; human: boolean }[]): Game {
-  const n = Math.min(4, Math.max(2, seats.length));
-  const players: Player[] = TOKENS.slice(0, n).map((t, i) => ({
-    id: i,
-    name: seats[i]?.name || t.name,
-    token: t.token,
-    color: t.color,
-    human: !!seats[i]?.human,
-    cash: 1500,
-    pos: 0,
-    inJail: false,
-    jailTurns: 0,
-    getOut: 0,
-    bankrupt: false,
-    netPeak: 1500,
-  }));
+export function newMultiplayerGame(seats: SeatSpec[]): Game {
+  const players = playersFromSeats(seats);
   return {
     players,
     props: emptyProps(),

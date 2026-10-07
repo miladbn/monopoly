@@ -164,7 +164,7 @@ export const fx = {
       const pop = t.life < 8 ? 0.6 + (t.life / 8) * 0.5 : 1;
       ctx.save();
       ctx.globalAlpha = k > 0.7 ? (1 - k) / 0.3 : 1;
-      ctx.font = `800 ${t.size * pop}px Inter, system-ui, sans-serif`;
+      ctx.font = `800 ${t.size * pop}px Manrope, system-ui, sans-serif`;
       ctx.lineWidth = 5;
       ctx.strokeStyle = 'rgba(0,0,0,0.65)';
       ctx.strokeText(t.text, t.x, t.y);

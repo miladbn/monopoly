@@ -135,7 +135,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (req.method !== 'POST') return json(res, 405, { error: 'Method not allowed' });
 
     const action = String(body.action || req.query.action || '').toLowerCase();
-    if (!action) return json(res, 400, { error: 'Action required (join|ready|start|action)' });
+    if (!action) return json(res, 400, { error: 'Action required (join|ready|start|appearance|action)' });
 
     const user = validateInitData(getInitData(req, body));
     const { channelGate } = await import('../server-bundle/channels.js');
@@ -147,10 +147,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const room = await loadRoom(roomId);
       if (!room) return json(res, 404, { error: 'Room not found' });
       if (room.status !== 'lobby') return json(res, 400, { error: 'Game already started' });
+      const pieceToken = typeof body.pieceToken === 'string' ? body.pieceToken : undefined;
+      const pieceColor = typeof body.pieceColor === 'string' ? body.pieceColor : undefined;
       const players = room.players as {
         telegramId: number;
         name: string;
         avatar?: string;
+        pieceToken?: string;
+        pieceColor?: string;
         ready: boolean;
         seat: number;
       }[];
@@ -158,12 +162,39 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (existing) {
         existing.name = name;
         existing.avatar = user.photo_url;
+        if (pieceToken) existing.pieceToken = pieceToken;
+        if (pieceColor) existing.pieceColor = pieceColor;
       } else {
         if (players.length >= Number(room.maxPlayers || 4)) return json(res, 400, { error: 'Room is full' });
         const seat = players.length;
-        players.push({ telegramId: user.id, name, avatar: user.photo_url, ready: false, seat });
+        players.push({
+          telegramId: user.id,
+          name,
+          avatar: user.photo_url,
+          pieceToken,
+          pieceColor,
+          ready: false,
+          seat,
+        });
         (room.seatMap as Record<number, number>)[seat] = user.id;
       }
+      await saveRoom(room);
+      return json(res, 200, { room: publicRoom(room, user.id) });
+    }
+
+    if (action === 'appearance') {
+      const pieceToken = typeof body.pieceToken === 'string' ? body.pieceToken : '';
+      const pieceColor = typeof body.pieceColor === 'string' ? body.pieceColor : '';
+      if (!pieceToken || !pieceColor) return json(res, 400, { error: 'pieceToken and pieceColor required' });
+      const room = await loadRoom(roomId);
+      if (!room) return json(res, 404, { error: 'Room not found' });
+      if (room.status !== 'lobby') return json(res, 400, { error: 'Game already started' });
+      const p = (room.players as { telegramId: number; pieceToken?: string; pieceColor?: string }[]).find(
+        (x) => x.telegramId === user.id,
+      );
+      if (!p) return json(res, 400, { error: 'Not in room' });
+      p.pieceToken = pieceToken;
+      p.pieceColor = pieceColor;
       await saveRoom(room);
       return json(res, 200, { room: publicRoom(room, user.id) });
     }

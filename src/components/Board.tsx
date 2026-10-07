@@ -53,10 +53,10 @@ const Tile = memo(function Tile({ sp, owner, ownerColor, houses, mortgaged, high
         gridRow: row,
         gridColumn: col,
         boxShadow: owner !== null ? `inset 0 0 0 2px ${ownerColor}, 0 0 14px -4px ${ownerColor}` : undefined,
-        background: highlight ? 'linear-gradient(180deg,#2b3a63,#1b2644)' : undefined,
+        background: highlight ? 'linear-gradient(180deg,#2a5a4a,#1a3d34)' : undefined,
       }}
       className={`tile relative flex items-center justify-center overflow-hidden rounded-[3px] transition-[box-shadow,background] duration-200 ${
-        highlight ? 'z-10 ring-1 ring-amber-300/70' : ''
+        highlight ? 'z-10 ring-1 ring-[var(--brass)]/70' : ''
       }`}
     >
       {color && (
@@ -139,9 +139,9 @@ export default function Board({
       className="relative aspect-square w-full select-none rounded-xl p-[3px]"
       style={{
         background:
-          'radial-gradient(circle at 50% 40%, #17233f 0%, #0c1324 60%, #080d1a 100%)',
-        border: '1px solid rgba(233,196,106,.25)',
-        boxShadow: '0 20px 60px rgba(0,0,0,.6), inset 0 0 60px rgba(0,0,0,.6)',
+          'radial-gradient(circle at 50% 40%, #1a4538 0%, #0f2a24 58%, #0a1412 100%)',
+        border: '1px solid rgba(201,168,76,.28)',
+        boxShadow: '0 20px 60px rgba(0,0,0,.55), inset 0 0 60px rgba(0,0,0,.55)',
       }}
     >
       <div
@@ -176,7 +176,7 @@ export default function Board({
             className="pointer-events-none absolute inset-0 opacity-70"
             style={{
               background:
-                'repeating-linear-gradient(135deg, rgba(233,196,106,.045) 0 10px, transparent 10px 20px)',
+                'repeating-linear-gradient(135deg, rgba(201,168,76,.05) 0 10px, transparent 10px 20px)',
             }}
           />
           {children}
