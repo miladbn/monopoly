@@ -450,3 +450,59 @@ export function InspectOverlay({ g, i, onClose }: { g: Game; i: number; onClose:
     </Modal>
   );
 }
+
+export function ChannelGate({
+  welcome,
+  comment,
+  channels,
+  checking,
+  error,
+  onRecheck,
+  onOpen,
+}: {
+  welcome: string;
+  comment: string;
+  channels: { title: string; url: string }[];
+  checking: boolean;
+  error: string | null;
+  onRecheck: () => void;
+  onOpen: (url: string) => void;
+}) {
+  return (
+    <Modal dim={0.92} z={80}>
+      <div className="popin panel scroll max-h-full w-full max-w-md overflow-y-auto rounded-2xl p-5">
+        <div className="text-center">
+          <div className="deco text-4xl font-bold leading-none gold-text">WELCOME</div>
+          <div className="deco mt-1 text-[10px] tracking-[0.45em] text-amber-200/60">DECO CITY</div>
+        </div>
+        <p className="mt-4 text-center text-sm leading-relaxed text-slate-200">
+          {welcome || 'Build an empire, trade deeds, and play with friends inside Telegram.'}
+        </p>
+        <p className="mt-3 text-center text-[13px] italic text-amber-200/80">
+          {comment || 'Play fair, trade bold, and may the best tycoon win.'}
+        </p>
+        <p className="mt-4 text-center text-[12px] font-semibold tracking-wide text-slate-300">
+          {channels.length === 0 && checking
+            ? 'Checking channel membership…'
+            : 'Join every channel below to use the game.'}
+        </p>
+        <div className="mt-3 space-y-2">
+          {channels.map((ch) => (
+            <button
+              key={ch.url || ch.title}
+              disabled={!ch.url || checking}
+              onClick={() => ch.url && onOpen(ch.url)}
+              className="btn btn-dark w-full py-3 text-sm"
+            >
+              Join {ch.title}
+            </button>
+          ))}
+        </div>
+        {error && <div className="mt-3 rounded-lg bg-red-500/15 px-3 py-2 text-[12px] text-red-200">{error}</div>}
+        <button disabled={checking} onClick={onRecheck} className="btn btn-gold mt-4 w-full py-3 deco">
+          {checking ? 'CHECKING…' : "I'VE JOINED"}
+        </button>
+      </div>
+    </Modal>
+  );
+}

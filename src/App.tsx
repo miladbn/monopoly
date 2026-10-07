@@ -7,6 +7,7 @@ import {
   AuctionOverlay,
   BuyOverlay,
   CardOverlay,
+  ChannelGate,
   GameOverOverlay,
   InspectOverlay,
   PauseOverlay,
@@ -19,15 +20,25 @@ import { fx } from './game/fx';
 import { sfx } from './game/sfx';
 import { useGame } from './game/useGame';
 import { useMultiplayerGame } from './game/useMultiplayerGame';
-import { bootstrapTelegram, getWebApp, isTelegram, telegramDisplayName } from './telegram/webapp';
+import { fetchAccess, type ChannelLink } from './telegram/api';
+import { bootstrapTelegram, getWebApp, isTelegram, openExternal, telegramDisplayName } from './telegram/webapp';
 
 type PlayMode = 'menu' | 'solo' | 'mp';
 
+type AccessState =
+  | { status: 'skip' }
+  | { status: 'loading' }
+  | { status: 'ok' }
+  | { status: 'blocked'; welcome: string; comment: string; channels: ChannelLink[]; error: string | null; checking: boolean }
+  | { status: 'error'; message: string };
+
 export default function App() {
   const boot = useRef(bootstrapTelegram());
-  const [mode, setMode] = useState<PlayMode>(() => (boot.current.roomFromStart || isTelegram() ? 'mp' : 'menu'));
+  const inTelegram = isTelegram();
+  const [access, setAccess] = useState<AccessState>(inTelegram ? { status: 'loading' } : { status: 'skip' });
+  const [mode, setMode] = useState<PlayMode>(() => (boot.current.roomFromStart || inTelegram ? 'mp' : 'menu'));
   const [mpRoomHint] = useState(boot.current.roomFromStart);
-  const [wantMp, setWantMp] = useState(!!boot.current.roomFromStart || isTelegram());
+  const [wantMp, setWantMp] = useState((!!boot.current.roomFromStart || inTelegram) && !inTelegram);
 
   const solo = useGame();
   const mp = useMultiplayerGame(wantMp ? mpRoomHint : undefined);
@@ -46,6 +57,40 @@ export default function App() {
   const cfg = useRef({ name: telegramDisplayName(), opp: 3 });
   const [muted, setMuted] = useState(sfx.muted);
   const onTile = useCallback((i: number) => setInspect(i), []);
+
+  const recheckAccess = useCallback(async (manual = false) => {
+    if (!inTelegram) return;
+    setAccess((prev) =>
+      prev.status === 'blocked' ? { ...prev, checking: true, error: null } : { status: 'loading' },
+    );
+    try {
+      const result = await fetchAccess();
+      if (result.ok) setAccess({ status: 'ok' });
+      else {
+        setAccess({
+          status: 'blocked',
+          welcome: result.welcome,
+          comment: result.comment,
+          channels: result.channels,
+          checking: false,
+          error: manual ? 'Join every channel, then tap again.' : null,
+        });
+      }
+    } catch (e) {
+      setAccess({ status: 'error', message: e instanceof Error ? e.message : 'Could not check channels' });
+    }
+  }, [inTelegram]);
+
+  useEffect(() => {
+    if (!inTelegram) return;
+    void recheckAccess(false);
+  }, [inTelegram, recheckAccess]);
+
+  useEffect(() => {
+    if (access.status !== 'ok' || !inTelegram) return;
+    setWantMp(true);
+    setMode('mp');
+  }, [access.status, inTelegram]);
 
   useEffect(() => {
     fx.setShakeTarget(shakeRef.current);
@@ -313,6 +358,18 @@ export default function App() {
       </div>
 
       <FxLayer />
+
+      {inTelegram && access.status !== 'ok' && access.status !== 'skip' && (
+        <ChannelGate
+          welcome={access.status === 'blocked' ? access.welcome : ''}
+          comment={access.status === 'blocked' ? access.comment : ''}
+          channels={access.status === 'blocked' ? access.channels : []}
+          checking={access.status === 'loading' || (access.status === 'blocked' && access.checking)}
+          error={access.status === 'error' ? access.message : access.status === 'blocked' ? access.error : null}
+          onRecheck={() => void recheckAccess(true)}
+          onOpen={openExternal}
+        />
+      )}
 
       {showStart && (
         <StartScreen

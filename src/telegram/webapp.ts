@@ -29,6 +29,8 @@ export interface TgWebApp {
   HapticFeedback?: {
     impactOccurred: (style: 'light' | 'medium' | 'heavy') => void;
   };
+  openTelegramLink?: (url: string) => void;
+  openLink?: (url: string) => void;
 }
 
 declare global {
@@ -72,4 +74,17 @@ export function telegramDisplayName(): string {
 
 export function getInitData(): string {
   return getWebApp()?.initData || '';
+}
+
+export function openExternal(url: string): void {
+  const wa = getWebApp();
+  if (url.includes('t.me') && wa?.openTelegramLink) {
+    wa.openTelegramLink(url);
+    return;
+  }
+  if (wa?.openLink) {
+    wa.openLink(url);
+    return;
+  }
+  window.open(url, '_blank', 'noopener,noreferrer');
 }

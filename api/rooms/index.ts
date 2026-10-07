@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createHmac, timingSafeEqual } from 'node:crypto';
+import { channelGate } from '../../server/channels';
 
 function cors(res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -93,6 +94,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const user = validateInitData(initData);
+    const gate = await channelGate(user.id);
+    if (gate) return json(res, 403, gate);
     const hostName = displayName(user);
     const id = roomId();
     const room = {

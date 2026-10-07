@@ -106,6 +106,57 @@ export async function sendAction(id: string, type: MpActionType, payload?: unkno
   return data.room;
 }
 
+export interface ChannelLink {
+  title: string;
+  url: string;
+}
+
+export interface AccessOk {
+  ok: true;
+  welcome: string;
+  comment: string;
+}
+
+export interface AccessBlocked {
+  ok: false;
+  error: string;
+  welcome: string;
+  comment: string;
+  channels: ChannelLink[];
+}
+
+export async function fetchAccess(): Promise<AccessOk | AccessBlocked> {
+  const initData = getInitData();
+  const headers: Record<string, string> = {};
+  if (initData) headers['X-Telegram-Init-Data'] = initData;
+  const res = await fetch('/api/access', { headers });
+  const text = await res.text();
+  let data: {
+    ok?: boolean;
+    code?: string;
+    error?: string;
+    welcome?: string;
+    comment?: string;
+    channels?: ChannelLink[];
+  } = {};
+  try {
+    data = text ? (JSON.parse(text) as typeof data) : {};
+  } catch {
+    throw new Error(res.ok ? 'Invalid server response' : `Server error ${res.status}`);
+  }
+  if (res.status === 403 && data.code === 'CHANNELS_REQUIRED') {
+    return {
+      ok: false,
+      error: data.error || 'Join the required channels to play',
+      welcome: data.welcome || '',
+      comment: data.comment || '',
+      channels: data.channels || [],
+    };
+  }
+  if (!res.ok) throw new Error(data.error || `Access check failed (${res.status})`);
+  return { ok: true, welcome: data.welcome || '', comment: data.comment || '' };
+}
+
 export function inviteUrl(roomId: string): string {
   const base = window.location.origin;
   return `${base}/?room=${roomId}`;

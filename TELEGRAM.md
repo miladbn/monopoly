@@ -30,6 +30,18 @@ In the Vercel project → Settings → Environment Variables:
 | `MINI_APP_SHORT_NAME` | e.g. `app` |
 | `UPSTASH_REDIS_REST_URL` | from [Upstash](https://upstash.com/) Redis |
 | `UPSTASH_REDIS_REST_TOKEN` | from Upstash |
+| `REQUIRED_CHANNELS` | channels players must join, comma-separated |
+| `WELCOME_MESSAGE` | welcome text on `/start` |
+| `WELCOME_COMMENT` | short comment under the welcome (also the bot's short description) |
+
+`REQUIRED_CHANNELS` examples:
+
+```
+@deco_city,@deco_news
+@deco_city|https://t.me/deco_city|Deco City News
+```
+
+Add the bot as an **admin** in each channel (so it can call `getChatMember`). Until `REQUIRED_CHANNELS` is set, the join check is skipped.
 
 Create a free Upstash Redis database and paste the REST credentials. Without Redis, rooms only live in memory on one serverless instance (not reliable in production).
 
@@ -56,7 +68,7 @@ Example invite after a room is created:
 
 | Command | Where | Effect |
 |---------|--------|--------|
-| `/start` | DM | Welcome + Open Game |
+| `/start` | DM | Welcome message, comment, and Open Game. If channels are required, Join buttons appear first. |
 | `/newgame` | DM or group | Create room + Mini App / invite buttons |
 | `/join` | Group | Open the group's lobby room |
 | `/status` | DM/group | Show lobby (`/status CODE` optional) |

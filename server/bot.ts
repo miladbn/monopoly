@@ -1,4 +1,12 @@
-import { Bot, InlineKeyboard } from 'grammy';
+import { Bot, InlineKeyboard, type Context } from 'grammy';
+import {
+  escHtml,
+  missingChannels,
+  requiredChannels,
+  welcomeBody,
+  welcomeComment,
+  type RequiredChannel,
+} from './channels';
 import { createRoom, getGroupRoomId, getRoom, startRoom, toPublicRoom } from './rooms';
 import { displayName } from './telegramAuth';
 
@@ -37,7 +45,73 @@ function inviteKeyboard(roomId: string) {
     );
 }
 
+function channelKeyboard(channels: RequiredChannel[], roomId?: string) {
+  const kb = new InlineKeyboard();
+  for (const ch of channels) {
+    if (!ch.url) continue;
+    kb.url(`Join ${ch.title}`, ch.url).row();
+  }
+  kb.text("I've joined", roomId ? `cj:${roomId}` : 'cj');
+  return kb;
+}
+
+function welcomeHtml(name?: string, roomId?: string): string {
+  const who = name ? `, ${escHtml(name)}` : '';
+  const room = roomId ? `\n\nRoom <b>${escHtml(roomId)}</b> is ready when you are.` : '';
+  return (
+    `🏙 <b>Welcome to DECO CITY</b>${who}!\n\n` +
+    `${escHtml(welcomeBody())}\n\n` +
+    `<i>${escHtml(welcomeComment())}</i>` +
+    room
+  );
+}
+
+function gateHtml(name: string | undefined, channels: RequiredChannel[], roomId?: string): string {
+  const list = channels.map((c) => `• ${escHtml(c.title)}`).join('\n');
+  return (
+    `${welcomeHtml(name, roomId)}\n\n` +
+    `<b>Join these channels to use the game</b>, then tap <b>I've joined</b>.\n` +
+    list
+  );
+}
+
+function commandsHtml(): string {
+  return (
+    '\n\n' +
+    '• /newgame — create a room (DM or group)\n' +
+    '• /join — join the open group room\n' +
+    '• /status — lobby status\n' +
+    '• /startgame — host starts (AI fills empty seats)'
+  );
+}
+
 let botSingleton: Bot | null = null;
+let profileOnce: Promise<void> | null = null;
+
+async function publishProfile(bot: Bot): Promise<void> {
+  if (process.env.SET_BOT_PROFILE === '0') return;
+  const description = `${welcomeBody()}\n\n${welcomeComment()}\n\nJoin our channels, then tap Start to play.`.slice(0, 512);
+  const short = welcomeComment().slice(0, 120);
+  try {
+    await bot.api.setMyDescription(description);
+    await bot.api.setMyShortDescription(short);
+  } catch (e) {
+    console.error('set bot profile', e);
+  }
+}
+
+async function requireChannels(ctx: Context, roomId?: string): Promise<boolean> {
+  const from = ctx.from;
+  if (!from) return false;
+  if (!requiredChannels().length) return true;
+  const missing = await missingChannels(from.id);
+  if (!missing.length) return true;
+  await ctx.reply(gateHtml(from.first_name, missing, roomId), {
+    parse_mode: 'HTML',
+    reply_markup: channelKeyboard(missing, roomId),
+  });
+  return false;
+}
 
 function buildBot(): Bot {
   const token = process.env.BOT_TOKEN;
@@ -45,28 +119,49 @@ function buildBot(): Bot {
   const bot = new Bot(token);
 
   bot.command('start', async (ctx) => {
+    const from = ctx.from;
     const payload = ctx.match?.trim();
-    if (payload && /^[A-Z0-9]{4,8}$/i.test(payload)) {
-      const roomId = payload.toUpperCase();
-      await ctx.reply(`🏠 Room *${roomId}*\nTap below to join the lobby.`, {
-        parse_mode: 'Markdown',
-        reply_markup: openGameKeyboard(roomId),
+    const roomId = payload && /^[A-Z0-9]{4,8}$/i.test(payload) ? payload.toUpperCase() : undefined;
+    if (from && requiredChannels().length) {
+      const missing = await missingChannels(from.id);
+      if (missing.length) {
+        await ctx.reply(gateHtml(from.first_name, missing, roomId), {
+          parse_mode: 'HTML',
+          reply_markup: channelKeyboard(missing, roomId),
+        });
+        return;
+      }
+    }
+    await ctx.reply(welcomeHtml(from?.first_name, roomId) + (roomId ? '' : commandsHtml()), {
+      parse_mode: 'HTML',
+      reply_markup: openGameKeyboard(roomId),
+    });
+  });
+
+  bot.callbackQuery(/^cj(?::([A-Z0-9]{4,8}))?$/i, async (ctx) => {
+    const roomId = ctx.match?.[1]?.toUpperCase();
+    const missing = await missingChannels(ctx.from.id);
+    if (missing.length) {
+      await ctx.answerCallbackQuery({
+        text: 'Join every channel first, then tap again.',
+        show_alert: true,
       });
       return;
     }
-    await ctx.reply(
-      '🏙 *DECO CITY*\nBuild empires with friends in Telegram.\n\n' +
-        '• `/newgame` — create a room (DM or group)\n' +
-        '• `/join` — join the open group room\n' +
-        '• `/status` — lobby status\n' +
-        '• `/startgame` — host starts (AI fills empty seats)',
-      { parse_mode: 'Markdown', reply_markup: openGameKeyboard() },
-    );
+    await ctx.answerCallbackQuery({ text: 'Welcome — you can play now.' });
+    const text = welcomeHtml(ctx.from.first_name, roomId) + (roomId ? '' : commandsHtml());
+    const extra = { parse_mode: 'HTML' as const, reply_markup: openGameKeyboard(roomId) };
+    try {
+      await ctx.editMessageText(text, extra);
+    } catch {
+      await ctx.reply(text, extra);
+    }
   });
 
   bot.command('newgame', async (ctx) => {
     const from = ctx.from;
     if (!from) return;
+    if (!(await requireChannels(ctx))) return;
     const chatId = ctx.chat?.type === 'private' ? undefined : ctx.chat?.id;
     const room = await createRoom({
       hostTelegramId: from.id,
@@ -86,6 +181,7 @@ function buildBot(): Bot {
   });
 
   bot.command('join', async (ctx) => {
+    if (!(await requireChannels(ctx))) return;
     const chat = ctx.chat;
     if (!chat || chat.type === 'private') {
       await ctx.reply('Use /join in a group that has an open room, or open an invite link.');
@@ -108,6 +204,7 @@ function buildBot(): Bot {
   });
 
   bot.command('status', async (ctx) => {
+    if (!(await requireChannels(ctx))) return;
     let roomId: string | null = null;
     if (ctx.chat && ctx.chat.type !== 'private') {
       roomId = await getGroupRoomId(ctx.chat.id);
@@ -136,6 +233,7 @@ function buildBot(): Bot {
   bot.command('startgame', async (ctx) => {
     const from = ctx.from;
     if (!from) return;
+    if (!(await requireChannels(ctx))) return;
     let roomId: string | null = null;
     if (ctx.chat && ctx.chat.type !== 'private') {
       roomId = await getGroupRoomId(ctx.chat.id);
@@ -168,5 +266,8 @@ function bot(): Bot {
 }
 
 export async function handleTelegramWebhook(update: unknown): Promise<void> {
-  await bot().handleUpdate(update as never);
+  const b = bot();
+  if (!profileOnce) profileOnce = publishProfile(b);
+  await profileOnce;
+  await b.handleUpdate(update as never);
 }
