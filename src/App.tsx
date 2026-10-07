@@ -426,8 +426,23 @@ export default function App() {
                     className="btn btn-dark min-h-[36px] px-2 py-1.5 text-[11px] sm:min-h-[40px] sm:px-2.5 sm:py-2"
                     onClick={() => solo.setSpeed(solo.speed === 1 ? 2 : 1)}
                     title="Toggle game speed"
+                    aria-label="Toggle game speed"
                   >
                     {solo.speed === 1 ? '1×' : '2×'}
+                  </button>
+                )}
+                {mode === 'solo' && g.started && g.phase !== 'over' && (
+                  <button
+                    type="button"
+                    className="btn btn-dark min-h-[36px] px-2 py-1.5 text-[11px] sm:min-h-[40px] sm:px-2.5 sm:py-2"
+                    disabled={!solo.canSave}
+                    onClick={() => {
+                      if (solo.saveGame()) hapticNotify('success');
+                    }}
+                    title={solo.canSave ? 'Save game' : 'Save available on roll / manage'}
+                    aria-label="Save game"
+                  >
+                    Save
                   </button>
                 )}
                 {access.status === 'ok' && access.admin && (
@@ -646,6 +661,10 @@ export default function App() {
           onMultiplayer={() => {
             setWantMp(true);
             setMode('mp');
+          }}
+          onContinue={() => {
+            sfx.unlock();
+            if (solo.loadGame()) setMode('solo');
           }}
           onStart={(name, opp, look, opts) => {
             cfg.current = { name, opp, look, daily: opts?.daily };

@@ -225,10 +225,22 @@ export async function startRoom(id: string, fillAi = true): Promise<PublicRoom> 
   return data.room;
 }
 
-export async function sendAction(id: string, type: MpActionType, payload?: unknown): Promise<PublicRoom> {
+export async function sendAction(
+  id: string,
+  type: MpActionType,
+  payload?: unknown,
+  clientActionId?: string,
+): Promise<PublicRoom> {
   const data = await request<{ room: PublicRoom }>('/api/room', {
     method: 'POST',
-    body: JSON.stringify({ action: 'action', roomId: id, type, payload, initData: getInitData() }),
+    body: JSON.stringify({
+      action: 'action',
+      roomId: id,
+      type,
+      payload,
+      clientActionId,
+      initData: getInitData(),
+    }),
   });
   return data.room;
 }

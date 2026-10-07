@@ -23,6 +23,7 @@ import { getEquippedTitle } from './achievements';
 import { settings } from './settings';
 import { Game, newGame } from './engine';
 import { loadPlayerProfile, savePlayerProfile } from './playerProfile';
+import { newClientActionId } from './actions';
 import type { MpActionType } from './mpEngine';
 import type { HighScore } from './useGame';
 
@@ -299,9 +300,10 @@ export function useMultiplayerGame(initialRoomId?: string) {
       if (!roomIdRef.current || acting.current) return;
       acting.current = true;
       if (type === 'roll' || (type === 'jail' && payload === 'roll')) setOptimisticRolling(true);
+      const clientActionId = newClientActionId();
       try {
         ensureAuth();
-        applyRoom(await sendAction(roomIdRef.current, type, payload));
+        applyRoom(await sendAction(roomIdRef.current, type, payload, clientActionId));
       } catch (e) {
         setOptimisticRolling(false);
         setError(e instanceof Error ? e.message : 'Action failed — try again');

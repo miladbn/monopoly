@@ -60,7 +60,7 @@ export function joinAsSpectator(id: string, player: Record<string, unknown>): Pr
 export function startRoom(roomId: string, telegramId: number, fillAi?: boolean): Promise<unknown>;
 export function rematchRoom(roomId: string, telegramId: number): Promise<unknown>;
 export function postReaction(roomId: string, telegramId: number, emoji: string): Promise<unknown>;
-export function applyRoomAction(roomId: string, telegramId: number, action: { type: string; payload?: unknown }): Promise<unknown>;
+export function applyRoomAction(roomId: string, telegramId: number, action: { type: string; payload?: unknown; clientActionId?: string }): Promise<unknown>;
 export function setPlayerAppearance(roomId: string, telegramId: number, appearance: { pieceToken: string; pieceColor: string; title?: string }): Promise<unknown>;
 export function heartbeat(roomId: string, telegramId: number): Promise<unknown>;
 export function kickPlayer(roomId: string, hostId: number, targetId: number): Promise<unknown>;

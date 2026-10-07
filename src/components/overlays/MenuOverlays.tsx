@@ -1,6 +1,9 @@
 import { useState } from 'react';
 import PlayerAppearancePicker from '../PlayerAppearancePicker';
+import { AI_DIFFICULTIES, type AiDifficulty } from '../../game/ai';
 import { Game, money, netWorth } from '../../game/engine';
+import { summarizeGame } from '../../game/history';
+import { hasSoloSave } from '../../game/persist';
 import {
   loadPlayerName,
   loadPlayerProfile,
@@ -14,23 +17,32 @@ import { Modal } from './Modal';
 export function StartScreen({
   scores,
   onStart,
+  onContinue,
   onMultiplayer,
   showTelegram,
   dailyBest,
 }: {
   scores: HighScore[];
-  onStart: (name: string, opponents: number, appearance: PlayerAppearance, opts?: { daily?: boolean }) => void;
+  onStart: (
+    name: string,
+    opponents: number,
+    appearance: PlayerAppearance,
+    opts?: { daily?: boolean; difficulty?: AiDifficulty },
+  ) => void;
+  onContinue?: () => void;
   onMultiplayer?: () => void;
   showTelegram?: boolean;
   dailyBest?: { score: number; won: boolean } | null;
 }) {
   const [name, setName] = useState(() => loadPlayerName());
   const [opp, setOpp] = useState(3);
+  const [difficulty, setDifficulty] = useState<AiDifficulty>('normal');
   const [appearance, setAppearance] = useState(loadPlayerProfile);
+  const canContinue = hasSoloSave();
   const go = (daily = false) => {
     savePlayerName(name);
     savePlayerProfile(appearance);
-    onStart(name.trim() || 'You', daily ? 3 : opp, appearance, { daily });
+    onStart(name.trim() || 'You', daily ? 3 : opp, appearance, { daily, difficulty: daily ? 'normal' : difficulty });
   };
   return (
     <Modal dim={0.88}>
@@ -74,6 +86,22 @@ export function StartScreen({
               ))}
             </div>
           </div>
+          <div>
+            <div className="mb-1 block text-[12px] font-medium text-[var(--mist)]">AI difficulty</div>
+            <div className="flex gap-2" role="group" aria-label="AI difficulty">
+              {AI_DIFFICULTIES.map((d) => (
+                <button
+                  key={d.id}
+                  type="button"
+                  onClick={() => setDifficulty(d.id)}
+                  className={`btn flex-1 py-2 text-sm sm:py-2.5 ${difficulty === d.id ? 'btn-gold' : 'btn-dark'}`}
+                  aria-pressed={difficulty === d.id}
+                >
+                  {d.label}
+                </button>
+              ))}
+            </div>
+          </div>
           <PlayerAppearancePicker
             value={appearance}
             onChange={(next) => {
@@ -82,7 +110,16 @@ export function StartScreen({
             }}
             compact
           />
-          <button type="button" onClick={() => go(false)} className="btn btn-gold pulse-glow w-full py-3 text-base sm:py-3.5">
+          {canContinue && onContinue && (
+            <button type="button" onClick={onContinue} className="btn btn-gold pulse-glow w-full py-3 text-base sm:py-3.5">
+              Continue saved game
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => go(false)}
+            className={`btn w-full py-3 text-base sm:py-3.5 ${canContinue && onContinue ? 'btn-dark' : 'btn-gold pulse-glow'}`}
+          >
             Play solo
           </button>
           <button type="button" onClick={() => go(true)} className="btn btn-dark w-full py-2.5 text-sm sm:py-3">
@@ -170,8 +207,9 @@ export function GameOverOverlay({
   const winner = g.winner !== null ? g.players[g.winner] : null;
   const won = last ? !!last.won : false;
   const bustedCount = g.players.filter((p) => p.bankrupt && p.id !== meId).length;
+  const hist = summarizeGame(g);
   return (
-    <Modal dim={0.85}>
+    <Modal dim={0.85} label="Game over">
       <div className="popin panel scroll max-h-full w-full max-w-sm overflow-y-auto rounded-xl p-6 text-center">
         <div className={`deco text-3xl font-bold sm:text-4xl ${isSpectator ? 'gold-text' : won ? 'gold-text' : 'text-[#e07a88]'}`}>
           {isSpectator ? 'Match over' : won ? 'Victory' : 'Bankrupt'}
@@ -224,6 +262,21 @@ export function GameOverOverlay({
               </span>
             </div>
           ))}
+        </div>
+
+        <div className="mt-3 grid grid-cols-4 gap-1 text-center text-[10px] text-[var(--mist)]">
+          <div className="rounded-md bg-black/25 px-1 py-1.5">
+            <div className="font-bold text-[var(--ivory)]">{hist.purchases}</div>buys
+          </div>
+          <div className="rounded-md bg-black/25 px-1 py-1.5">
+            <div className="font-bold text-[var(--ivory)]">{hist.auctions}</div>auctions
+          </div>
+          <div className="rounded-md bg-black/25 px-1 py-1.5">
+            <div className="font-bold text-[var(--ivory)]">{hist.trades}</div>trades
+          </div>
+          <div className="rounded-md bg-black/25 px-1 py-1.5">
+            <div className="font-bold text-[var(--ivory)]">{hist.jailEvents}</div>jail
+          </div>
         </div>
 
         {scores.length > 0 && (

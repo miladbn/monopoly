@@ -99,3 +99,42 @@ describe('manage / trade phase guards', () => {
     expect(unmortgageCost(200)).toBe(110);
   });
 });
+
+describe('AI policy', () => {
+  it('hard AI values completing a set more aggressively than easy', async () => {
+    const { aiPropertyValue } = await import('./ai');
+    const g = newGame('You', 1);
+    // Own one brown; evaluate the other
+    g.props[1].owner = 1;
+    const easy = aiPropertyValue(g, g.players[1], 3, 'easy');
+    const hard = aiPropertyValue(g, g.players[1], 3, 'hard');
+    expect(hard).toBeGreaterThan(easy);
+  });
+
+  it('rejects obviously bad trades on normal', async () => {
+    const { aiAcceptsTrade } = await import('./ai');
+    const g = newGame('You', 1);
+    g.props[1].owner = 0;
+    g.props[3].owner = 1;
+    // Human gives nothing valuable, takes Baltic for free
+    expect(aiAcceptsTrade(g, 1, 0, [], [3], 0, 'normal')).toBe(false);
+  });
+});
+
+describe('history summary', () => {
+  it('counts key events from the log', async () => {
+    const { summarizeGame } = await import('./history');
+    const g = newGame('You', 1);
+    g.log = [
+      { id: 1, text: 'You buys Baltic.' },
+      { id: 2, text: 'You pays $50 rent.' },
+      { id: 3, text: 'Trade with Rex.' },
+      { id: 4, text: 'Sent to jail.' },
+    ];
+    const s = summarizeGame(g);
+    expect(s.purchases).toBe(1);
+    expect(s.payments).toBe(1);
+    expect(s.trades).toBe(1);
+    expect(s.jailEvents).toBe(1);
+  });
+});
