@@ -93,7 +93,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const user = validateInitData(initData);
-    const { channelGate } = await import('../../server/channels');
+    const { channelGate } = await import('../../server-bundle/channels.js');
     const gate = await channelGate(user.id);
     if (gate) return json(res, 403, gate);
     const hostName = displayName(user);

@@ -130,7 +130,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         /* optional on poll */
       }
       if (telegramId !== undefined) {
-        const { channelGate } = await import('../server/channels');
+        const { channelGate } = await import('../server-bundle/channels.js');
         const gate = await channelGate(telegramId);
         if (gate) return json(res, 403, gate);
       }
@@ -143,7 +143,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!action) return json(res, 400, { error: 'Action required (join|ready|start|action)' });
 
     const user = validateInitData(getInitData(req, body));
-    const { channelGate } = await import('../server/channels');
+    const { channelGate } = await import('../server-bundle/channels.js');
     const gate = await channelGate(user.id);
     if (gate) return json(res, 403, gate);
     const name = displayName(user);
@@ -187,7 +187,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (action === 'start') {
       // Prefer shared server logic when available; fall back to inline error if import fails.
       try {
-        const { startRoom } = await import('../server/rooms');
+        const { startRoom } = await import('../server-bundle/rooms.js');
         const room = await startRoom(roomId, user.id, body.fillAi !== false);
         return json(res, 200, { room: publicRoom(room as unknown as Record<string, unknown>, user.id) });
       } catch (e) {
@@ -203,7 +203,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (action === 'action') {
-      const { applyRoomAction } = await import('../server/rooms');
+      const { applyRoomAction } = await import('../server-bundle/rooms.js');
       if (!body.type) return json(res, 400, { error: 'Action type required' });
       const room = await applyRoomAction(roomId, user.id, {
         type: String(body.type),

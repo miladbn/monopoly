@@ -3,5 +3,6 @@
 !.env.example
 node_modules
 dist
+server-bundle
 .vercel
 .env*
