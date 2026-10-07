@@ -89,9 +89,13 @@ function Row({ l, r, bold }: { l: string; r: string; bold?: boolean }) {
 export function StartScreen({
   scores,
   onStart,
+  onMultiplayer,
+  showTelegram,
 }: {
   scores: HighScore[];
   onStart: (name: string, opponents: number) => void;
+  onMultiplayer?: () => void;
+  showTelegram?: boolean;
 }) {
   const [name, setName] = useState(() => localStorage.getItem('deco-city-name') || '');
   const [opp, setOpp] = useState(3);
@@ -133,8 +137,13 @@ export function StartScreen({
             </div>
           </div>
           <button onClick={go} className="btn btn-gold pulse-glow w-full py-3 text-lg deco">
-            ▶ PLAY
+            ▶ PLAY SOLO
           </button>
+          {showTelegram && onMultiplayer && (
+            <button onClick={onMultiplayer} className="btn btn-dark w-full py-3 text-sm deco">
+              ✈ PLAY IN TELEGRAM
+            </button>
+          )}
         </div>
 
         <div className="mt-5 grid grid-cols-2 gap-3 text-[10px] text-slate-400">
@@ -297,9 +306,21 @@ export function CardOverlay({ g, onAck }: { g: Game; onAck: () => void }) {
   );
 }
 
-export function BuyOverlay({ g, i, onBuy, onAuction }: { g: Game; i: number; onBuy: () => void; onAuction: () => void }) {
+export function BuyOverlay({
+  g,
+  i,
+  onBuy,
+  onAuction,
+  meId = 0,
+}: {
+  g: Game;
+  i: number;
+  onBuy: () => void;
+  onAuction: () => void;
+  meId?: number;
+}) {
   const sp = SPACES[i];
-  const afford = g.players[0].cash >= sp.price!;
+  const afford = g.players[meId].cash >= sp.price!;
   return (
     <Modal z={45} dim={0.6}>
       <div className="popin w-full max-w-[280px]">
@@ -318,11 +339,21 @@ export function BuyOverlay({ g, i, onBuy, onAuction }: { g: Game; i: number; onB
   );
 }
 
-export function AuctionOverlay({ g, onBid, onPass }: { g: Game; onBid: () => void; onPass: () => void }) {
+export function AuctionOverlay({
+  g,
+  onBid,
+  onPass,
+  meId = 0,
+}: {
+  g: Game;
+  onBid: () => void;
+  onPass: () => void;
+  meId?: number;
+}) {
   const a = g.auction!;
   const sp = SPACES[a.space];
-  const myTurn = a.current === 0 && a.active[0];
-  const canBid = g.players[0].cash >= a.price;
+  const myTurn = a.current === meId && a.active[meId];
+  const canBid = g.players[meId].cash >= a.price;
   return (
     <Modal z={45} dim={0.6}>
       <div className="popin panel w-full max-w-xs rounded-2xl p-4 text-center">
@@ -365,7 +396,7 @@ export function AuctionOverlay({ g, onBid, onPass }: { g: Game; onBid: () => voi
           </div>
         ) : (
           <div className="mt-3 text-[11px] text-slate-500">
-            {a.active[0] ? 'Rivals are bidding…' : 'You are out of this auction.'}
+            {a.active[meId] ? 'Rivals are bidding…' : 'You are out of this auction.'}
           </div>
         )}
       </div>

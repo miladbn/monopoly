@@ -32,9 +32,10 @@ export function Die({ v, rolling, size = 44 }: { v: number; rolling: boolean; si
   );
 }
 
-export function CenterPiece({ g }: { g: Game }) {
+export function CenterPiece({ g, meId = 0 }: { g: Game; meId?: number }) {
   const cur = g.players[g.turn];
   const total = g.dice[0] + g.dice[1];
+  const mine = cur?.id === meId;
   return (
     <div className="relative flex h-full w-full flex-col items-center justify-center gap-[3%] px-3 text-center">
       <div className="deco text-[clamp(14px,3.6vmin,38px)] font-bold leading-none gold-text">DECO CITY</div>
@@ -53,7 +54,7 @@ export function CenterPiece({ g }: { g: Game }) {
         style={{ background: `${cur.color}22`, boxShadow: `inset 0 0 0 1px ${cur.color}66` }}
       >
         <span>{cur.token}</span>
-        <span style={{ color: cur.color }}>{cur.human ? 'Your turn' : `${cur.name} thinking…`}</span>
+        <span style={{ color: cur.color }}>{mine ? 'Your turn' : `${cur.name} playing…`}</span>
       </div>
       <div className="deco text-[clamp(7px,1.2vmin,12px)] tracking-widest text-slate-400/70">ROUND {g.round}</div>
     </div>
@@ -136,6 +137,7 @@ export function DeedList({
   onMortgage,
   onUnmortgage,
   onInspect,
+  meId = 0,
 }: {
   g: Game;
   onBuild: (i: number) => void;
@@ -143,8 +145,9 @@ export function DeedList({
   onMortgage: (i: number) => void;
   onUnmortgage: (i: number) => void;
   onInspect: (i: number) => void;
+  meId?: number;
 }) {
-  const mine = playerProps(g, 0);
+  const mine = playerProps(g, meId);
   if (!mine.length)
     return <div className="py-4 text-center text-[11px] text-slate-500">You own no deeds yet. Land & buy!</div>;
   return (
@@ -185,7 +188,7 @@ export function DeedList({
             {st.mortgaged ? (
               <button
                 className="btn btn-gold h-6 px-1.5 text-[9px] disabled:opacity-25"
-                disabled={g.players[0].cash < unmCost}
+                disabled={g.players[meId].cash < unmCost}
                 onClick={() => onUnmortgage(i)}
                 title={`Unmortgage $${unmCost}`}
               >

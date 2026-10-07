@@ -67,6 +67,14 @@ export interface Game {
   paused: boolean;
 }
 
+function emptyProps(): Record<number, PropState> {
+  const props: Record<number, PropState> = {};
+  SPACES.forEach((s) => {
+    if (s.price) props[s.i] = { owner: null, houses: 0, mortgaged: false };
+  });
+  return props;
+}
+
 export function newGame(humanName: string, opponents: number): Game {
   const players: Player[] = TOKENS.slice(0, opponents + 1).map((t, i) => ({
     id: i,
@@ -82,19 +90,53 @@ export function newGame(humanName: string, opponents: number): Game {
     bankrupt: false,
     netPeak: 1500,
   }));
-  const props: Record<number, PropState> = {};
-  SPACES.forEach((s) => {
-    if (s.price) props[s.i] = { owner: null, houses: 0, mortgaged: false };
-  });
   return {
     players,
-    props,
+    props: emptyProps(),
     turn: 0,
     phase: 'roll',
     dice: [1, 1],
     rolling: false,
     doubles: 0,
     log: [{ id: 1, text: 'Welcome to Deco City. Roll the dice!', color: '#e9c46a' }],
+    winner: null,
+    round: 1,
+    card: null,
+    buySpace: null,
+    auction: null,
+    jailChoice: false,
+    lastGain: 0,
+    started: true,
+    paused: false,
+  };
+}
+
+/** Build a multiplayer match: each entry is a human or AI seat (2–4 total). */
+export function newMultiplayerGame(seats: { name: string; human: boolean }[]): Game {
+  const n = Math.min(4, Math.max(2, seats.length));
+  const players: Player[] = TOKENS.slice(0, n).map((t, i) => ({
+    id: i,
+    name: seats[i]?.name || t.name,
+    token: t.token,
+    color: t.color,
+    human: !!seats[i]?.human,
+    cash: 1500,
+    pos: 0,
+    inJail: false,
+    jailTurns: 0,
+    getOut: 0,
+    bankrupt: false,
+    netPeak: 1500,
+  }));
+  return {
+    players,
+    props: emptyProps(),
+    turn: 0,
+    phase: 'roll',
+    dice: [1, 1],
+    rolling: false,
+    doubles: 0,
+    log: [{ id: 1, text: 'Welcome to Deco City multiplayer!', color: '#e9c46a' }],
     winner: null,
     round: 1,
     card: null,

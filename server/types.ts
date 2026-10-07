@@ -1,0 +1,61 @@
+import type { Game } from '../src/game/engine';
+import type { MpRuntime } from '../src/game/mpEngine';
+
+export interface RoomPlayer {
+  telegramId: number;
+  name: string;
+  avatar?: string;
+  ready: boolean;
+  seat: number;
+}
+
+export type RoomStatus = 'lobby' | 'playing' | 'ended';
+
+export interface Room {
+  id: string;
+  chatId?: number;
+  hostTelegramId: number;
+  players: RoomPlayer[];
+  status: RoomStatus;
+  maxPlayers: number;
+  version: number;
+  createdAt: number;
+  /** Filled once the match starts */
+  runtime: MpRuntime | null;
+  /** Seat index → telegramId for human seats; AI seats have no entry */
+  seatMap: Record<number, number>;
+}
+
+export interface PublicRoom {
+  id: string;
+  chatId?: number;
+  hostTelegramId: number;
+  players: RoomPlayer[];
+  status: RoomStatus;
+  maxPlayers: number;
+  version: number;
+  createdAt: number;
+  game: Game | null;
+  seatMap: Record<number, number>;
+  mySeat?: number;
+}
+
+export function toPublicRoom(room: Room, telegramId?: number): PublicRoom {
+  const mySeat =
+    telegramId !== undefined
+      ? room.players.find((p) => p.telegramId === telegramId)?.seat
+      : undefined;
+  return {
+    id: room.id,
+    chatId: room.chatId,
+    hostTelegramId: room.hostTelegramId,
+    players: room.players,
+    status: room.status,
+    maxPlayers: room.maxPlayers,
+    version: room.version,
+    createdAt: room.createdAt,
+    game: room.runtime?.game ?? null,
+    seatMap: room.seatMap,
+    mySeat,
+  };
+}

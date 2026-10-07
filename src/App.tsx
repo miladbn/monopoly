@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import Board from './components/Board';
 import FxLayer from './components/FxLayer';
 import { CenterPiece, DeedList, LogPanel, PlayerCard } from './components/Hud';
+import LobbyOverlay from './components/LobbyOverlay';
 import {
   AuctionOverlay,
   BuyOverlay,
@@ -17,17 +18,32 @@ import { money, netWorth } from './game/engine';
 import { fx } from './game/fx';
 import { sfx } from './game/sfx';
 import { useGame } from './game/useGame';
+import { useMultiplayerGame } from './game/useMultiplayerGame';
+import { bootstrapTelegram, getWebApp, isTelegram, telegramDisplayName } from './telegram/webapp';
+
+type PlayMode = 'menu' | 'solo' | 'mp';
 
 export default function App() {
-  const game = useGame();
-  const { g, respond } = game;
+  const boot = useRef(bootstrapTelegram());
+  const [mode, setMode] = useState<PlayMode>(() => (boot.current.roomFromStart || isTelegram() ? 'mp' : 'menu'));
+  const [mpRoomHint] = useState(boot.current.roomFromStart);
+  const [wantMp, setWantMp] = useState(!!boot.current.roomFromStart || isTelegram());
+
+  const solo = useGame();
+  const mp = useMultiplayerGame(wantMp ? mpRoomHint : undefined);
+
+  const active = mode === 'mp' || wantMp ? mp : solo;
+  const g = active.g;
+  const respond = active.respond;
+  const meId = mode === 'mp' || (wantMp && mp.room) ? (mp.mySeat ?? 0) : 0;
+
   const shakeRef = useRef<HTMLDivElement>(null);
   const boxRef = useRef<HTMLDivElement>(null);
   const [boardSize, setBoardSize] = useState(420);
   const [tab, setTab] = useState<'log' | 'deeds'>('log');
   const [inspect, setInspect] = useState<number | null>(null);
   const [trade, setTrade] = useState(false);
-  const cfg = useRef({ name: 'You', opp: 3 });
+  const cfg = useRef({ name: telegramDisplayName(), opp: 3 });
   const [muted, setMuted] = useState(sfx.muted);
   const onTile = useCallback((i: number) => setInspect(i), []);
 
@@ -49,31 +65,43 @@ export default function App() {
     return () => ro.disconnect();
   }, [g.started]);
 
-  const myTurn = g.players[g.turn]?.human && !g.paused;
+  // Enter mp mode when room is created/joined
+  useEffect(() => {
+    if (wantMp && mp.room) setMode('mp');
+  }, [wantMp, mp.room]);
+
+  const me = g.players[meId];
+  const myTurn =
+    !!me &&
+    !g.paused &&
+    (mode === 'mp' ? mp.isMyTurn : !!g.players[g.turn]?.human && g.turn === meId);
 
   const primary = useCallback(() => {
     if (!g.started || g.paused || g.phase === 'over') return;
     switch (g.phase) {
       case 'card':
-        respond('ack', true);
+        if (mode === 'mp' ? myTurn || g.turn === meId : true) respond('ack', true);
         break;
       case 'roll':
         if (myTurn) respond(g.jailChoice ? 'jail' : 'roll', g.jailChoice ? 'roll' : true);
         break;
       case 'manage':
-        respond('endturn', true);
+        if (myTurn || g.turn === meId) respond('endturn', true);
         break;
       case 'buy':
-        if (g.players[0].cash >= (SPACES[g.buySpace ?? 0].price || 0)) respond('buy', 'buy');
+        if (me && me.cash >= (SPACES[g.buySpace ?? 0].price || 0)) respond('buy', 'buy');
         else respond('buy', 'auction');
         break;
       case 'auction':
-        if (g.auction && g.auction.current === 0 && g.players[0].cash >= g.auction.price) respond('auction', 'bid');
+        if (g.auction && g.auction.current === meId && me && me.cash >= g.auction.price) respond('auction', 'bid');
         break;
     }
-  }, [g, myTurn, respond]);
+  }, [g, myTurn, respond, mode, meId, me]);
 
-  const restart = useCallback(() => game.start(cfg.current.name, cfg.current.opp), [game]);
+  const restart = useCallback(() => {
+    if (mode === 'mp') return;
+    solo.start(cfg.current.name, cfg.current.opp);
+  }, [mode, solo]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -84,9 +112,9 @@ export default function App() {
         primary();
       } else if (k === 'p' || k === 'escape') {
         e.preventDefault();
-        if (g.phase !== 'over') game.togglePause();
+        if (g.phase !== 'over' && mode !== 'mp') solo.togglePause();
       } else if (k === 'r') {
-        if (g.phase === 'over' || g.paused) restart();
+        if (mode !== 'mp' && (g.phase === 'over' || g.paused)) restart();
       } else if (k === 'b') {
         if (g.phase === 'buy') respond('buy', 'buy');
       } else if (k === 'a') {
@@ -100,20 +128,20 @@ export default function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [g, primary, respond, game, restart]);
+  }, [g, primary, respond, solo, restart, mode]);
 
-  const me = g.players[0];
-  const score = me ? netWorth(g, 0) : 0;
+  const score = me ? netWorth(g, meId) : 0;
+  const inLobby = wantMp && (!mp.room || mp.room.status === 'lobby');
+  const showStart = mode === 'menu' && !wantMp && !g.started;
 
-  /* ---------- action bar (plain function: keeps DOM stable across renders) ---------- */
   const actionBar = () => {
     if (g.phase === 'roll' && myTurn && g.jailChoice) {
       return (
         <div className="grid grid-cols-3 gap-2">
-          <button className="btn btn-gold py-3 text-xs" disabled={me.cash < 50} onClick={() => respond('jail', 'pay')}>
+          <button className="btn btn-gold py-3 text-xs" disabled={!me || me.cash < 50} onClick={() => respond('jail', 'pay')}>
             PAY $50
           </button>
-          <button className="btn btn-dark py-3 text-xs" disabled={me.getOut < 1} onClick={() => respond('jail', 'card')}>
+          <button className="btn btn-dark py-3 text-xs" disabled={!me || me.getOut < 1} onClick={() => respond('jail', 'card')}>
             USE CARD
           </button>
           <button className="btn btn-green py-3 text-xs" onClick={() => respond('jail', 'roll')}>
@@ -128,13 +156,15 @@ export default function App() {
           <button className="btn btn-gold pulse-glow flex-1 py-4 text-lg deco" onClick={() => respond('roll', true)}>
             🎲 ROLL <span className="text-xs opacity-60">(SPACE)</span>
           </button>
-          <button className="btn btn-dark px-3 py-4 text-xs" onClick={() => setTrade(true)}>
-            🤝
-          </button>
+          {mode !== 'mp' && (
+            <button className="btn btn-dark px-3 py-4 text-xs" onClick={() => setTrade(true)}>
+              🤝
+            </button>
+          )}
         </div>
       );
     }
-    if (g.phase === 'manage') {
+    if (g.phase === 'manage' && (myTurn || g.turn === meId)) {
       return (
         <div className="flex gap-2">
           <button className="btn btn-gold flex-1 py-4 text-base deco" onClick={() => respond('endturn', true)}>
@@ -143,13 +173,15 @@ export default function App() {
           <button className="btn btn-dark px-3 py-4 text-xs" onClick={() => setTab('deeds')}>
             🏗️
           </button>
-          <button className="btn btn-dark px-3 py-4 text-xs" onClick={() => setTrade(true)}>
-            🤝
-          </button>
+          {mode !== 'mp' && (
+            <button className="btn btn-dark px-3 py-4 text-xs" onClick={() => setTrade(true)}>
+              🤝
+            </button>
+          )}
         </div>
       );
     }
-    if (g.phase === 'card') {
+    if (g.phase === 'card' && (mode !== 'mp' || g.turn === meId)) {
       return (
         <button className="btn btn-gold w-full py-4 deco" onClick={() => respond('ack', true)}>
           CONTINUE
@@ -171,29 +203,42 @@ export default function App() {
     );
   };
 
+  const goSoloMenu = () => {
+    setWantMp(false);
+    setMode('menu');
+    mp.leaveLobby();
+    solo.toMenu();
+  };
+
   return (
     <div className="fixed inset-0 overflow-hidden" style={{ background: 'radial-gradient(circle at 50% 0%, #121c35 0%, #070b16 70%)' }}>
       <div ref={shakeRef} className="h-full w-full will-change-transform">
         <div className="flex h-full w-full flex-col gap-2 p-2 landscape:flex-row lg:flex-row">
-          {/* board column */}
           <div className="flex min-h-0 flex-1 flex-col gap-2">
             <div className="flex items-center justify-between gap-2 px-1">
               <div className="flex items-baseline gap-2">
                 <span className="deco text-lg font-bold leading-none gold-text sm:text-2xl">DECO CITY</span>
                 <span className="hidden text-[10px] tracking-[0.35em] text-amber-200/40 sm:inline">TYCOON</span>
+                {mode === 'mp' && mp.room && (
+                  <span className="rounded bg-sky-500/20 px-1.5 py-0.5 text-[9px] font-bold tracking-wider text-sky-200">
+                    {mp.room.id}
+                  </span>
+                )}
               </div>
               <div className="flex items-center gap-1.5">
                 <div className="rounded-lg bg-black/40 px-2.5 py-1 text-right leading-tight">
                   <div className="text-[8px] uppercase tracking-widest text-slate-400">Score</div>
                   <div className="text-[13px] font-extrabold tabular-nums text-emerald-300">{money(score)}</div>
                 </div>
-                <button
-                  className="btn btn-dark px-2.5 py-2 text-[11px]"
-                  onClick={() => game.setSpeed(game.speed === 1 ? 0.45 : 1)}
-                  title="Toggle game speed"
-                >
-                  {game.speed === 1 ? '⏩ 1×' : '⏩ 2×'}
-                </button>
+                {mode !== 'mp' && (
+                  <button
+                    className="btn btn-dark px-2.5 py-2 text-[11px]"
+                    onClick={() => solo.setSpeed(solo.speed === 1 ? 0.45 : 1)}
+                    title="Toggle game speed"
+                  >
+                    {solo.speed === 1 ? '⏩ 1×' : '⏩ 2×'}
+                  </button>
+                )}
                 <button
                   className="btn btn-dark px-2.5 py-2 text-[11px]"
                   onClick={() => {
@@ -204,21 +249,22 @@ export default function App() {
                 >
                   {muted ? '🔇' : '🔊'}
                 </button>
-                <button className="btn btn-dark px-3 py-2 text-[11px]" onClick={game.togglePause}>
-                  ⏸
-                </button>
+                {mode !== 'mp' && (
+                  <button className="btn btn-dark px-3 py-2 text-[11px]" onClick={solo.togglePause}>
+                    ⏸
+                  </button>
+                )}
               </div>
             </div>
             <div ref={boxRef} className="flex min-h-0 flex-1 items-center justify-center">
               <div style={{ width: boardSize, height: boardSize }}>
                 <Board g={g} onTile={onTile} onCenter={primary}>
-                  <CenterPiece g={g} />
+                  <CenterPiece g={g} meId={meId} />
                 </Board>
               </div>
             </div>
           </div>
 
-          {/* side panel */}
           <aside className="panel flex h-[38vh] w-full shrink-0 flex-col gap-2 rounded-xl p-2 landscape:h-auto landscape:w-[300px] lg:h-auto lg:w-[330px]">
             <div className="grid grid-cols-2 gap-1 landscape:grid-cols-1 lg:grid-cols-1">
               {g.players.map((p) => (
@@ -235,7 +281,9 @@ export default function App() {
                     tab === t ? 'bg-amber-300/20 text-amber-200' : 'bg-white/5 text-slate-500'
                   }`}
                 >
-                  {t === 'log' ? 'Ticker' : `My Deeds (${SPACES.filter((s) => s.price && g.props[s.i].owner === 0).length})`}
+                  {t === 'log'
+                    ? 'Ticker'
+                    : `My Deeds (${SPACES.filter((s) => s.price && g.props[s.i].owner === meId).length})`}
                 </button>
               ))}
             </div>
@@ -246,53 +294,95 @@ export default function App() {
               ) : (
                 <DeedList
                   g={g}
-                  onBuild={game.build}
-                  onSell={game.sellHouse}
-                  onMortgage={game.mortgage}
-                  onUnmortgage={game.unmortgage}
+                  meId={meId}
+                  onBuild={active.build}
+                  onSell={active.sellHouse}
+                  onMortgage={active.mortgage}
+                  onUnmortgage={active.unmortgage}
                   onInspect={setInspect}
                 />
               )}
             </div>
 
-            {actionBar()}
+            {g.started && actionBar()}
+            {mode === 'mp' && mp.error && (
+              <div className="rounded bg-red-500/15 px-2 py-1 text-[10px] text-red-200">{mp.error}</div>
+            )}
           </aside>
         </div>
       </div>
 
       <FxLayer />
 
-      {!g.started && (
+      {showStart && (
         <StartScreen
-          scores={game.scores}
+          scores={solo.scores}
+          showTelegram
+          onMultiplayer={() => {
+            setWantMp(true);
+            setMode('mp');
+          }}
           onStart={(name, opp) => {
             cfg.current = { name, opp };
             sfx.unlock();
-            game.start(name, opp);
+            setMode('solo');
+            solo.start(name, opp);
           }}
         />
       )}
-      {g.started && g.paused && g.phase !== 'over' && (
-        <PauseOverlay onResume={game.togglePause} onRestart={restart} onMenu={game.toMenu} />
+
+      {inLobby && (
+        <LobbyOverlay
+          room={mp.room}
+          busy={mp.busy}
+          error={mp.error}
+          isHost={!!mp.room && getWebApp()?.initDataUnsafe?.user?.id === mp.room.hostTelegramId}
+          meReady={
+            !!mp.room?.players.find((p) => p.telegramId === getWebApp()?.initDataUnsafe?.user?.id)?.ready
+          }
+          onReady={(v) => void mp.ready(v)}
+          onStart={() => void mp.startMatch()}
+          onLeave={goSoloMenu}
+          onCreate={() => void mp.hostCreate()}
+          onJoin={(code) => void mp.join(code)}
+        />
+      )}
+
+      {mode === 'solo' && g.started && g.paused && g.phase !== 'over' && (
+        <PauseOverlay onResume={solo.togglePause} onRestart={restart} onMenu={goSoloMenu} />
       )}
       {g.phase === 'over' && (
-        <GameOverOverlay g={g} last={game.lastScore} scores={game.scores} onRestart={restart} onMenu={game.toMenu} />
+        <GameOverOverlay
+          g={g}
+          last={mode === 'solo' ? solo.lastScore : null}
+          scores={mode === 'solo' ? solo.scores : []}
+          onRestart={mode === 'solo' ? restart : goSoloMenu}
+          onMenu={goSoloMenu}
+        />
       )}
-      {!g.paused && g.phase === 'card' && <CardOverlay g={g} onAck={() => respond('ack', true)} />}
-      {!g.paused && g.phase === 'buy' && g.buySpace !== null && (
+      {!g.paused && g.phase === 'card' && (mode !== 'mp' || g.turn === meId) && (
+        <CardOverlay g={g} onAck={() => respond('ack', true)} />
+      )}
+      {!g.paused && g.phase === 'buy' && g.buySpace !== null && (mode !== 'mp' || g.turn === meId) && (
         <BuyOverlay
           g={g}
           i={g.buySpace}
+          meId={meId}
           onBuy={() => respond('buy', 'buy')}
           onAuction={() => respond('buy', 'auction')}
         />
       )}
       {!g.paused && g.phase === 'auction' && g.auction && (
-        <AuctionOverlay g={g} onBid={() => respond('auction', 'bid')} onPass={() => respond('auction', 'pass')} />
+        <AuctionOverlay
+          g={g}
+          meId={meId}
+          onBid={() => respond('auction', 'bid')}
+          onPass={() => respond('auction', 'pass')}
+        />
       )}
       {inspect !== null && <InspectOverlay g={g} i={inspect} onClose={() => setInspect(null)} />}
-      {trade && g.started && g.phase !== 'over' && (
-        <TradeOverlay g={g} onClose={() => setTrade(false)} onOffer={game.proposeTrade} />
+      {trade && mode === 'solo' && g.started && g.phase !== 'over' && (
+        <TradeOverlay g={g} onClose={() => setTrade(false)} onOffer={solo.proposeTrade} />
       )}
     </div>
   );
