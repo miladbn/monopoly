@@ -113,6 +113,7 @@ export interface ChannelLink {
 
 export interface AccessOk {
   ok: true;
+  admin: boolean;
   welcome: string;
   comment: string;
 }
@@ -137,6 +138,7 @@ export async function fetchAccess(): Promise<AccessOk | AccessBlocked> {
     error?: string;
     welcome?: string;
     comment?: string;
+    admin?: boolean;
     channels?: ChannelLink[];
   } = {};
   try {
@@ -154,10 +156,31 @@ export async function fetchAccess(): Promise<AccessOk | AccessBlocked> {
     };
   }
   if (!res.ok) throw new Error(data.error || `Access check failed (${res.status})`);
-  return { ok: true, welcome: data.welcome || '', comment: data.comment || '' };
+  return { ok: true, admin: !!data.admin, welcome: data.welcome || '', comment: data.comment || '' };
+}
+
+export interface BotReport {
+  bot: { id: number | null; name: string; username: string };
+  counts: { users: number; starts: number; opens: number; rooms: number; games: number };
+  channels: { title: string; members: number | null }[];
+  webhook: { set: boolean; pending: number; lastError: string | null };
+  recent: { id: number; name: string; username?: string; at: number; event: 'start' | 'open' }[];
+}
+
+export async function fetchReport(): Promise<BotReport> {
+  const data = await request<{ report: BotReport }>('/api/report');
+  return data.report;
 }
 
 export function inviteUrl(roomId: string): string {
   const base = window.location.origin;
   return `${base}/?room=${roomId}`;
+}
+
+/** Room codes are 6 letters. A pasted invite link is reduced to that code. */
+export function roomCodeFromInput(raw: string): string {
+  const text = raw.trim();
+  const fromLink = text.match(/(?:[?&]room=|startapp=)([A-Za-z0-9]{4,8})/i);
+  if (fromLink) return fromLink[1].toUpperCase();
+  return text.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
 }

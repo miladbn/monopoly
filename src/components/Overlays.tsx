@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { GROUP_COLORS, GROUP_MEMBERS, SPACES } from '../game/data';
 import { Game, money, netWorth, rentFor } from '../game/engine';
 import { HighScore } from '../game/useGame';
+import type { BotReport } from '../telegram/api';
 
 export function Modal({
   children,
@@ -502,6 +503,124 @@ export function ChannelGate({
         <button disabled={checking} onClick={onRecheck} className="btn btn-gold mt-4 w-full py-3 deco">
           {checking ? 'CHECKING…' : "I'VE JOINED"}
         </button>
+      </div>
+    </Modal>
+  );
+}
+
+function ago(at: number): string {
+  const min = Math.round((Date.now() - at) / 60000);
+  if (min < 1) return 'just now';
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.round(min / 60);
+  if (hr < 48) return `${hr}h ago`;
+  return new Date(at).toLocaleDateString();
+}
+
+export function BotReportOverlay({
+  report,
+  loading,
+  error,
+  onClose,
+  onRefresh,
+}: {
+  report: BotReport | null;
+  loading: boolean;
+  error: string | null;
+  onClose: () => void;
+  onRefresh: () => void;
+}) {
+  const counts = report?.counts;
+  const tiles = [
+    { label: 'Players', value: counts?.users },
+    { label: 'Bot starts', value: counts?.starts },
+    { label: 'App opens', value: counts?.opens },
+    { label: 'Rooms', value: counts?.rooms },
+    { label: 'Games', value: counts?.games },
+  ];
+  return (
+    <Modal dim={0.92} z={70}>
+      <div className="popin panel scroll max-h-full w-full max-w-md overflow-y-auto rounded-2xl p-5">
+        <div className="text-center">
+          <div className="deco text-3xl font-bold leading-none gold-text">BOT REPORT</div>
+          <div className="deco mt-1 text-[10px] tracking-[0.35em] text-amber-200/60">
+            {report?.bot.username ? `@${report.bot.username}` : 'DECO CITY'}
+          </div>
+        </div>
+
+        {loading && !report && (
+          <p className="mt-6 text-center text-sm text-slate-300">Loading the report…</p>
+        )}
+        {error && <div className="mt-4 rounded-lg bg-red-500/15 px-3 py-2 text-[12px] text-red-200">{error}</div>}
+
+        {report && (
+          <>
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              {tiles.map((tile) => (
+                <div key={tile.label} className="rounded-lg bg-black/30 px-3 py-2">
+                  <div className="text-[9px] font-bold uppercase tracking-widest text-slate-400">{tile.label}</div>
+                  <div className="text-xl font-extrabold tabular-nums text-amber-100">
+                    {(tile.value ?? 0).toLocaleString()}
+                  </div>
+                </div>
+              ))}
+              <div className="rounded-lg bg-black/30 px-3 py-2">
+                <div className="text-[9px] font-bold uppercase tracking-widest text-slate-400">Webhook</div>
+                <div className="text-sm font-extrabold text-amber-100">{report.webhook.set ? 'Connected' : 'Not set'}</div>
+                <div className="text-[10px] text-slate-400">{report.webhook.pending.toLocaleString()} pending</div>
+              </div>
+            </div>
+            {report.webhook.lastError && (
+              <p className="mt-2 text-[11px] text-red-200">Last webhook error: {report.webhook.lastError}</p>
+            )}
+
+            {report.channels.length > 0 && (
+              <div className="mt-4">
+                <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Channels</div>
+                <div className="mt-1 space-y-1">
+                  {report.channels.map((ch) => (
+                    <div key={ch.title} className="flex items-center justify-between rounded-md bg-white/5 px-2 py-1.5 text-[12px]">
+                      <span>{ch.title}</span>
+                      <span className="tabular-nums text-slate-300">
+                        {ch.members === null ? '—' : `${ch.members.toLocaleString()} members`}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="mt-4">
+              <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Recent players</div>
+              {report.recent.length === 0 ? (
+                <p className="mt-1 text-[12px] text-slate-400">No players recorded yet. Counts start from this update.</p>
+              ) : (
+                <div className="mt-1 space-y-1">
+                  {report.recent.map((row, i) => (
+                    <div key={`${row.id}-${row.at}-${i}`} className="flex items-center justify-between gap-2 rounded-md bg-white/5 px-2 py-1.5 text-[12px]">
+                      <span className="min-w-0 truncate">
+                        {row.name}
+                        {row.username ? <span className="text-slate-400"> @{row.username}</span> : null}
+                      </span>
+                      <span className="shrink-0 text-[10px] uppercase tracking-wide text-slate-400">
+                        {row.event === 'start' ? 'start' : 'app'} · {ago(row.at)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
+        )}
+
+        <div className="mt-4 flex gap-2">
+          <button disabled={loading} onClick={onRefresh} className="btn btn-dark flex-1 py-3 text-xs">
+            {loading ? 'REFRESHING…' : 'REFRESH'}
+          </button>
+          <button onClick={onClose} className="btn btn-gold flex-1 py-3 deco">
+            PLAY
+          </button>
+        </div>
       </div>
     </Modal>
   );

@@ -13,8 +13,17 @@ export interface ChannelGate {
 }
 
 const MEMBER = new Set(['creator', 'administrator', 'member']);
-const memberCache = new Map<string, { ok: boolean; at: number }>();
+const ADMIN_STATUS = new Set(['creator', 'administrator']);
+const memberCache = new Map<string, { status: string; member: boolean; at: number }>();
 const MEMBER_TTL_MS = 60_000;
+
+/** Telegram user ids that always see the bot report. Comma-separated. */
+export function configuredAdminIds(): number[] {
+  return (process.env.ADMIN_IDS || '')
+    .split(/[\s,]+/)
+    .map((part) => Number(part))
+    .filter((id) => Number.isFinite(id) && id > 0);
+}
 
 export function welcomeComment(): string {
   return (process.env.WELCOME_COMMENT || 'Play fair, trade bold, and may the best tycoon win.').trim();
@@ -94,10 +103,14 @@ export async function channelGate(userId: number): Promise<ChannelGate | null> {
   };
 }
 
-async function isMember(token: string, chatId: string, userId: number): Promise<boolean> {
+async function memberStatus(
+  token: string,
+  chatId: string,
+  userId: number,
+): Promise<{ status: string; member: boolean } | null> {
   const key = `${chatId}:${userId}`;
   const cached = memberCache.get(key);
-  if (cached && Date.now() - cached.at < MEMBER_TTL_MS) return cached.ok;
+  if (cached && Date.now() - cached.at < MEMBER_TTL_MS) return cached;
   try {
     const url =
       `https://api.telegram.org/bot${token}/getChatMember` +
@@ -110,16 +123,32 @@ async function isMember(token: string, chatId: string, userId: number): Promise<
     };
     if (!data.ok || !data.result?.status) {
       console.error('getChatMember', chatId, data.description || res.status);
-      memberCache.set(key, { ok: false, at: Date.now() });
-      return false;
+      return null;
     }
-    const ok = data.result.status === 'restricted' ? data.result.is_member !== false : MEMBER.has(data.result.status);
-    memberCache.set(key, { ok, at: Date.now() });
-    return ok;
+    const status = data.result.status;
+    const member = status === 'restricted' ? data.result.is_member !== false : MEMBER.has(status);
+    const hit = { status, member, at: Date.now() };
+    memberCache.set(key, hit);
+    return hit;
   } catch (e) {
     console.error('getChatMember', chatId, e);
-    return false;
+    return null;
   }
+}
+
+async function isMember(token: string, chatId: string, userId: number): Promise<boolean> {
+  const hit = await memberStatus(token, chatId, userId);
+  return !!hit?.member;
+}
+
+/** Bot owner (ADMIN_IDS) or a creator/administrator of a required channel. */
+export async function isAppAdmin(userId: number): Promise<boolean> {
+  if (configuredAdminIds().includes(userId)) return true;
+  const channels = requiredChannels();
+  const token = process.env.BOT_TOKEN;
+  if (!token || !channels.length) return false;
+  const hits = await Promise.all(channels.map((ch) => memberStatus(token, ch.chatId, userId)));
+  return hits.some((hit) => !!hit && ADMIN_STATUS.has(hit.status));
 }
 
 export function escHtml(s: string): string {

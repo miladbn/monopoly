@@ -66,3 +66,48 @@ export async function kvDel(key: string): Promise<void> {
     throw new Error('Redis delete failed');
   }
 }
+
+const memorySets = new Map<string, Set<string>>();
+const memoryLists = new Map<string, string[]>();
+
+export async function kvIncr(key: string): Promise<number> {
+  if (!creds()) {
+    const n = Number(memory.get(key) || 0) + 1;
+    memory.set(key, String(n));
+    return n;
+  }
+  const result = await upstash(['INCR', key]);
+  return Number(result) || 0;
+}
+
+export async function kvSadd(key: string, member: string): Promise<void> {
+  if (!creds()) {
+    const set = memorySets.get(key) ?? new Set<string>();
+    set.add(member);
+    memorySets.set(key, set);
+    return;
+  }
+  await upstash(['SADD', key, member]);
+}
+
+export async function kvScard(key: string): Promise<number> {
+  if (!creds()) return memorySets.get(key)?.size ?? 0;
+  return Number(await upstash(['SCARD', key])) || 0;
+}
+
+export async function kvPushRecent(key: string, value: string, keep: number): Promise<void> {
+  if (!creds()) {
+    const list = memoryLists.get(key) ?? [];
+    list.unshift(value);
+    memoryLists.set(key, list.slice(0, keep));
+    return;
+  }
+  await upstash(['LPUSH', key, value]);
+  await upstash(['LTRIM', key, '0', String(keep - 1)]);
+}
+
+export async function kvLrange(key: string, start: number, stop: number): Promise<string[]> {
+  if (!creds()) return (memoryLists.get(key) ?? []).slice(start, stop + 1);
+  const result = await upstash(['LRANGE', key, String(start), String(stop)]);
+  return Array.isArray(result) ? result.map((item) => String(item)) : [];
+}

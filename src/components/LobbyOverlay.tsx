@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { inviteUrl, type PublicRoom } from '../telegram/api';
+import { inviteUrl, roomCodeFromInput, type PublicRoom } from '../telegram/api';
 import { Modal } from './Overlays';
 
 export default function LobbyOverlay({
@@ -26,7 +26,7 @@ export default function LobbyOverlay({
   onJoin: (code: string) => void;
 }) {
   const [code, setCode] = useState('');
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState<'code' | 'link' | null>(null);
 
   if (!room) {
     return (
@@ -44,8 +44,11 @@ export default function LobbyOverlay({
             <div className="flex gap-2">
               <input
                 value={code}
-                onChange={(e) => setCode(e.target.value.toUpperCase().slice(0, 8))}
+                onChange={(e) => setCode(roomCodeFromInput(e.target.value))}
                 placeholder="ROOM CODE"
+                inputMode="text"
+                autoCapitalize="characters"
+                spellCheck={false}
                 className="flex-1 rounded-lg border border-amber-300/20 bg-black/40 px-3 py-2 text-sm tracking-widest text-amber-50 outline-none"
               />
               <button disabled={busy || code.length < 4} onClick={() => onJoin(code)} className="btn btn-dark px-4">
@@ -61,14 +64,23 @@ export default function LobbyOverlay({
     );
   }
 
-  const copy = async () => {
+  const copy = async (kind: 'code' | 'link') => {
+    const text = kind === 'code' ? room.id : inviteUrl(room.id);
     try {
-      await navigator.clipboard.writeText(inviteUrl(room.id));
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
+      await navigator.clipboard.writeText(text);
     } catch {
-      /* ignore */
+      const el = document.createElement('textarea');
+      el.value = text;
+      el.setAttribute('readonly', '');
+      el.style.position = 'fixed';
+      el.style.left = '-9999px';
+      document.body.appendChild(el);
+      el.select();
+      document.execCommand('copy');
+      el.remove();
     }
+    setCopied(kind);
+    setTimeout(() => setCopied(null), 1500);
   };
 
   return (
@@ -95,14 +107,17 @@ export default function LobbyOverlay({
           ))}
         </div>
 
-        <div className="mt-4 flex gap-2">
-          <button onClick={copy} className="btn btn-dark flex-1 py-2 text-xs">
-            {copied ? 'COPIED' : 'COPY INVITE'}
+        <div className="mt-4 grid grid-cols-2 gap-2">
+          <button onClick={() => void copy('code')} className="btn btn-dark py-2 text-xs">
+            {copied === 'code' ? 'COPIED' : 'COPY CODE'}
           </button>
-          <button onClick={() => onReady(!meReady)} className={`btn flex-1 py-2 text-xs ${meReady ? 'btn-dark' : 'btn-gold'}`}>
-            {meReady ? 'UNREADY' : 'READY'}
+          <button onClick={() => void copy('link')} className="btn btn-dark py-2 text-xs">
+            {copied === 'link' ? 'COPIED' : 'COPY LINK'}
           </button>
         </div>
+        <button onClick={() => onReady(!meReady)} className={`btn mt-2 w-full py-2 text-xs ${meReady ? 'btn-dark' : 'btn-gold'}`}>
+          {meReady ? 'UNREADY' : 'READY'}
+        </button>
 
         {isHost && (
           <button disabled={busy} onClick={onStart} className="btn btn-gold pulse-glow mt-3 w-full py-3 deco">

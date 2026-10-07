@@ -7,6 +7,7 @@ import {
   AuctionOverlay,
   BuyOverlay,
   CardOverlay,
+  BotReportOverlay,
   ChannelGate,
   GameOverOverlay,
   InspectOverlay,
@@ -20,7 +21,7 @@ import { fx } from './game/fx';
 import { sfx } from './game/sfx';
 import { useGame } from './game/useGame';
 import { useMultiplayerGame } from './game/useMultiplayerGame';
-import { fetchAccess, type ChannelLink } from './telegram/api';
+import { fetchAccess, fetchReport, type BotReport, type ChannelLink } from './telegram/api';
 import { bootstrapTelegram, getWebApp, isTelegram, openExternal, telegramDisplayName } from './telegram/webapp';
 
 type PlayMode = 'menu' | 'solo' | 'mp';
@@ -28,7 +29,7 @@ type PlayMode = 'menu' | 'solo' | 'mp';
 type AccessState =
   | { status: 'skip' }
   | { status: 'loading' }
-  | { status: 'ok' }
+  | { status: 'ok'; admin: boolean }
   | { status: 'blocked'; welcome: string; comment: string; channels: ChannelLink[]; error: string | null; checking: boolean }
   | { status: 'error'; message: string };
 
@@ -56,7 +57,23 @@ export default function App() {
   const [trade, setTrade] = useState(false);
   const cfg = useRef({ name: telegramDisplayName(), opp: 3 });
   const [muted, setMuted] = useState(sfx.muted);
+  const [reportOpen, setReportOpen] = useState(false);
+  const [report, setReport] = useState<BotReport | null>(null);
+  const [reportError, setReportError] = useState<string | null>(null);
+  const [reportLoading, setReportLoading] = useState(false);
   const onTile = useCallback((i: number) => setInspect(i), []);
+
+  const loadReport = useCallback(async () => {
+    setReportLoading(true);
+    setReportError(null);
+    try {
+      setReport(await fetchReport());
+    } catch (e) {
+      setReportError(e instanceof Error ? e.message : 'Could not load the report');
+    } finally {
+      setReportLoading(false);
+    }
+  }, []);
 
   const recheckAccess = useCallback(async (manual = false) => {
     if (!inTelegram) return;
@@ -65,7 +82,13 @@ export default function App() {
     );
     try {
       const result = await fetchAccess();
-      if (result.ok) setAccess({ status: 'ok' });
+      if (result.ok) {
+        setAccess({ status: 'ok', admin: result.admin });
+        if (result.admin) {
+          setReportOpen(true);
+          void loadReport();
+        }
+      }
       else {
         setAccess({
           status: 'blocked',
@@ -79,7 +102,7 @@ export default function App() {
     } catch (e) {
       setAccess({ status: 'error', message: e instanceof Error ? e.message : 'Could not check channels' });
     }
-  }, [inTelegram]);
+  }, [inTelegram, loadReport]);
 
   useEffect(() => {
     if (!inTelegram) return;
@@ -284,6 +307,18 @@ export default function App() {
                     {solo.speed === 1 ? '⏩ 1×' : '⏩ 2×'}
                   </button>
                 )}
+                {access.status === 'ok' && access.admin && (
+                  <button
+                    className="btn btn-dark px-2.5 py-2 text-[11px]"
+                    onClick={() => {
+                      setReportOpen(true);
+                      void loadReport();
+                    }}
+                    title="Bot report"
+                  >
+                    Report
+                  </button>
+                )}
                 <button
                   className="btn btn-dark px-2.5 py-2 text-[11px]"
                   onClick={() => {
@@ -358,6 +393,29 @@ export default function App() {
       </div>
 
       <FxLayer />
+
+      {reportOpen && access.status === 'ok' && access.admin && (
+        <BotReportOverlay
+          report={report}
+          loading={reportLoading}
+          error={reportError}
+          onRefresh={() => void loadReport()}
+          onClose={() => setReportOpen(false)}
+        />
+      )}
+
+      {access.status === 'ok' && access.admin && !reportOpen && inLobby && (
+        <button
+          className="btn btn-gold fixed bottom-4 right-4 px-3 py-2 text-[11px]"
+          style={{ zIndex: 55 }}
+          onClick={() => {
+            setReportOpen(true);
+            void loadReport();
+          }}
+        >
+          Bot report
+        </button>
+      )}
 
       {inTelegram && access.status !== 'ok' && access.status !== 'skip' && (
         <ChannelGate

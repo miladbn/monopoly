@@ -3,6 +3,7 @@ import {
   createRoom,
   fetchRoom,
   joinRoom,
+  roomCodeFromInput,
   sendAction,
   setReady,
   startRoom,
@@ -113,7 +114,7 @@ export function useMultiplayerGame(initialRoomId?: string) {
       setError(null);
       try {
         ensureAuth();
-        applyRoom(await joinRoom(id.trim().toUpperCase()));
+        applyRoom(await joinRoom(roomCodeFromInput(id)));
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Join failed');
       } finally {

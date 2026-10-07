@@ -10,6 +10,7 @@ await esbuild.build({
     'server/channels.ts',
     'server/http.ts',
     'server/telegramAuth.ts',
+    'server/stats.ts',
   ],
   bundle: true,
   platform: 'node',
@@ -38,6 +39,19 @@ export function displayName(user: { id: number; first_name?: string; last_name?:
 } | null>;
 export function welcomeBody(): string;
 export function welcomeComment(): string;
+export function isAppAdmin(userId: number): Promise<boolean>;
+`,
+  'server-bundle/stats.d.ts': `export function noteStart(user: { id: number; name?: string; username?: string }): Promise<void>;
+export function noteOpen(user: { id: number; name?: string; username?: string }): Promise<void>;
+export function noteRoom(): Promise<void>;
+export function noteGame(): Promise<void>;
+export function botReport(): Promise<{
+  bot: { id: number | null; name: string; username: string };
+  counts: { users: number; starts: number; opens: number; rooms: number; games: number };
+  channels: { title: string; members: number | null }[];
+  webhook: { set: boolean; pending: number; lastError: string | null };
+  recent: { id: number; name: string; username?: string; at: number; event: 'start' | 'open' }[];
+}>;
 `,
   'server-bundle/rooms.d.ts': `export function startRoom(roomId: string, telegramId: number, fillAi?: boolean): Promise<unknown>;
 export function applyRoomAction(roomId: string, telegramId: number, action: { type: string; payload?: unknown }): Promise<unknown>;

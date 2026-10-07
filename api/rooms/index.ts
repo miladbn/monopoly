@@ -119,6 +119,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     };
 
     await redisCommand(['SET', `deco:room:${id}`, JSON.stringify(room), 'EX', 86400]);
+    try {
+      const { noteRoom } = await import('../../server-bundle/stats.js');
+      await noteRoom();
+    } catch (e) {
+      console.error('noteRoom', e);
+    }
 
     return json(res, 201, {
       room: {

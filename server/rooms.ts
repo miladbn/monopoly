@@ -1,5 +1,6 @@
 import { applyAction, createRuntime } from '../src/game/mpEngine';
 import { kvDel, kvGet, kvSet } from './redis';
+import { noteGame, noteRoom } from './stats';
 import type { Room, RoomPlayer, RoomRuntime } from './types';
 import { toPublicRoom } from './types';
 
@@ -69,6 +70,7 @@ export async function createRoom(opts: {
     seatMap: { 0: opts.hostTelegramId },
   };
   await save(room);
+  await noteRoom();
   return room;
 }
 
@@ -139,6 +141,7 @@ export async function startRoom(id: string, telegramId: number, fillAi = true): 
     room.seatMap[i] = p.telegramId;
   });
   await save(room);
+  await noteGame();
   return room;
 }
 

@@ -8,6 +8,7 @@ import {
   type RequiredChannel,
 } from './channels';
 import { createRoom, getGroupRoomId, getRoom, startRoom, toPublicRoom } from './rooms';
+import { noteStart } from './stats';
 import { displayName } from './telegramAuth';
 
 function webappUrl(): string {
@@ -120,6 +121,7 @@ function buildBot(): Bot {
 
   bot.command('start', async (ctx) => {
     const from = ctx.from;
+    if (from) await noteStart({ id: from.id, name: from.first_name, username: from.username });
     const payload = ctx.match?.trim();
     const roomId = payload && /^[A-Z0-9]{4,8}$/i.test(payload) ? payload.toUpperCase() : undefined;
     if (from && requiredChannels().length) {

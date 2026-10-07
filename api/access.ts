@@ -10,15 +10,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const { validateInitData } = await import('../server-bundle/telegramAuth.js');
-    const { channelGate, welcomeBody, welcomeComment } = await import('../server-bundle/channels.js');
+    const { validateInitData, displayName } = await import('../server-bundle/telegramAuth.js');
+    const { channelGate, isAppAdmin, welcomeBody, welcomeComment } = await import('../server-bundle/channels.js');
+    const { noteOpen } = await import('../server-bundle/stats.js');
     const user = validateInitData(getInitData(req)).user;
-    const gate = await channelGate(user.id);
-    if (gate) {
-      ok(res, { ok: false, ...gate }, 403);
-      return;
+    const admin = await isAppAdmin(user.id);
+    if (!admin) {
+      const gate = await channelGate(user.id);
+      if (gate) {
+        ok(res, { ok: false, ...gate }, 403);
+        return;
+      }
     }
-    ok(res, { ok: true, welcome: welcomeBody(), comment: welcomeComment(), channels: [] });
+    await noteOpen({ id: user.id, name: displayName(user), username: user.username });
+    ok(res, { ok: true, admin, welcome: welcomeBody(), comment: welcomeComment(), channels: [] });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     const status = msg.includes('signature') || msg.includes('Missing') || msg.includes('expired') || msg.includes('initData') ? 401 : 500;
