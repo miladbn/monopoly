@@ -121,29 +121,40 @@ export function useMultiplayerGame(initialRoomId?: string) {
 
   const ready = useCallback(
     async (value: boolean) => {
-      if (!roomIdRef.current) return;
+      const id = roomIdRef.current || room?.id;
+      if (!id) {
+        setError('Room id required — create or join a room first');
+        return;
+      }
+      roomIdRef.current = id;
       try {
         ensureAuth();
-        applyRoom(await setReady(roomIdRef.current, value));
+        applyRoom(await setReady(id, value));
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Ready failed');
       }
     },
-    [applyRoom],
+    [applyRoom, room?.id],
   );
 
   const startMatch = useCallback(async () => {
-    if (!roomIdRef.current) return;
+    const id = roomIdRef.current || room?.id;
+    if (!id) {
+      setError('Room id required — create or join a room first');
+      return;
+    }
+    roomIdRef.current = id;
     setBusy(true);
+    setError(null);
     try {
       ensureAuth();
-      applyRoom(await startRoom(roomIdRef.current, true));
+      applyRoom(await startRoom(id, true));
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Start failed');
     } finally {
       setBusy(false);
     }
-  }, [applyRoom]);
+  }, [applyRoom, room?.id]);
 
   const leaveLobby = useCallback(() => {
     roomIdRef.current = null;

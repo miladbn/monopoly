@@ -1,3 +1,4 @@
+import { applyAction, createRuntime } from '../src/game/mpEngine';
 import { kvDel, kvGet, kvSet } from './redis';
 import type { Room, RoomPlayer, RoomRuntime } from './types';
 import { toPublicRoom } from './types';
@@ -111,7 +112,6 @@ export async function setReady(id: string, telegramId: number, ready: boolean): 
 }
 
 export async function startRoom(id: string, telegramId: number, fillAi = true): Promise<Room> {
-  const { createRuntime } = await import('../src/game/mpEngine');
   const room = await getRoom(id);
   if (!room) throw new Error('Room not found');
   if (room.status !== 'lobby') throw new Error('Already started');
@@ -147,7 +147,6 @@ export async function applyRoomAction(
   telegramId: number,
   action: { type: string; payload?: unknown },
 ): Promise<Room> {
-  const { applyAction } = await import('../src/game/mpEngine');
   const room = await getRoom(id);
   if (!room) throw new Error('Room not found');
   if (room.status !== 'playing' || !room.runtime) throw new Error('Game not in progress');
