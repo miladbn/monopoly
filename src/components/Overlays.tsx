@@ -246,6 +246,7 @@ export function GameOverOverlay({
   newTitles,
   isHost,
   isSpectator,
+  meId = 0,
 }: {
   g: Game;
   last: HighScore | null;
@@ -259,9 +260,11 @@ export function GameOverOverlay({
   newTitles?: string[];
   isHost?: boolean;
   isSpectator?: boolean;
+  meId?: number;
 }) {
   const winner = g.winner !== null ? g.players[g.winner] : null;
   const won = last ? !!last.won : false;
+  const bustedCount = g.players.filter((p) => p.bankrupt && p.id !== meId).length;
   return (
     <Modal dim={0.85}>
       <div className="popin panel scroll max-h-full w-full max-w-sm overflow-y-auto rounded-xl p-6 text-center">
@@ -300,7 +303,7 @@ export function GameOverOverlay({
                 <div className="font-bold text-[var(--ivory)]">{last.rounds}</div>rounds
               </div>
               <div>
-                <div className="font-bold text-[var(--ivory)]">{g.players.filter((p) => p.bankrupt && p.id !== 0).length}</div>busted
+                <div className="font-bold text-[var(--ivory)]">{bustedCount}</div>busted
               </div>
             </div>
           </div>
@@ -383,7 +386,6 @@ export function CardOverlay({ g, onAck }: { g: Game; onAck: () => void }) {
             : 'linear-gradient(160deg,#7ec8b8,#2a6b5c)',
           color: '#101814',
         }}
-        onClick={onAck}
         role="dialog"
         aria-label={chance ? 'Chance card' : 'Community Chest card'}
       >

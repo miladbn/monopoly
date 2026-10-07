@@ -1,6 +1,6 @@
 import { buildMultiplayerSeats } from '../src/game/playerProfile';
 import { applyAction, createRuntime } from '../src/game/mpEngine';
-import { kvDel, kvGet, kvSet, kvSadd, kvSmembers, kvSrem } from './redis';
+import { kvDel, kvGet, kvSet, kvSetNx, kvSadd, kvSmembers, kvSrem } from './redis';
 import { noteGame, noteRoom } from './stats';
 import type { Room, RoomPlayer, RoomReaction, RoomRuntime, RoomSeries } from './types';
 import { toPublicRoom } from './types';
@@ -32,6 +32,25 @@ async function save(room: Room): Promise<void> {
   await kvSet(ROOM_KEY(room.id), JSON.stringify(room), ROOM_TTL);
   if (room.chatId) await kvSet(GROUP_KEY(room.chatId), room.id, ROOM_TTL);
   await indexPublic(room);
+}
+
+const LOCK_KEY = (id: string) => `deco:lock:${id.toUpperCase()}`;
+
+/** Serialize room mutations so concurrent actions/heartbeats cannot clobber each other. */
+async function withRoomLock<T>(id: string, fn: () => Promise<T>): Promise<T> {
+  const key = LOCK_KEY(id);
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const got = await kvSetNx(key, String(Date.now()), 8);
+    if (got) {
+      try {
+        return await fn();
+      } finally {
+        await kvDel(key);
+      }
+    }
+    await new Promise((r) => setTimeout(r, 35 + attempt * 25));
+  }
+  throw new Error('Room is busy — try again');
 }
 
 export async function getRoom(id: string): Promise<Room | null> {
@@ -223,15 +242,17 @@ export async function joinAsSpectator(
 }
 
 export async function heartbeat(id: string, telegramId: number): Promise<Room> {
-  const room = await getRoom(id);
-  if (!room) throw new Error('Room not found');
-  const p =
-    room.players.find((x) => x.telegramId === telegramId) ||
-    room.spectators?.find((x) => x.telegramId === telegramId);
-  if (!p) throw new Error('Not in room');
-  p.lastSeenAt = Date.now();
-  await save(room);
-  return room;
+  return withRoomLock(id, async () => {
+    const room = await getRoom(id);
+    if (!room) throw new Error('Room not found');
+    const p =
+      room.players.find((x) => x.telegramId === telegramId) ||
+      room.spectators?.find((x) => x.telegramId === telegramId);
+    if (!p) throw new Error('Not in room');
+    p.lastSeenAt = Date.now();
+    await save(room);
+    return room;
+  });
 }
 
 export async function kickPlayer(id: string, hostId: number, targetId: number): Promise<Room> {
@@ -355,24 +376,26 @@ export async function postReaction(
   telegramId: number,
   emoji: string,
 ): Promise<Room> {
-  const room = await getRoom(id);
-  if (!room) throw new Error('Room not found');
-  if (room.status !== 'playing') throw new Error('Reactions only during play');
-  if (!REACTION_EMOJI.has(emoji)) throw new Error('Unknown reaction');
-  const who =
-    room.players.find((p) => p.telegramId === telegramId) ||
-    room.spectators?.find((p) => p.telegramId === telegramId);
-  if (!who) throw new Error('Not in room');
-  const reaction: RoomReaction = {
-    id: `${Date.now()}-${telegramId}-${Math.random().toString(36).slice(2, 6)}`,
-    fromTelegramId: telegramId,
-    fromName: who.name,
-    emoji,
-    at: Date.now(),
-  };
-  room.reactions = [...(room.reactions || []), reaction].slice(-12);
-  await save(room);
-  return room;
+  return withRoomLock(id, async () => {
+    const room = await getRoom(id);
+    if (!room) throw new Error('Room not found');
+    if (room.status !== 'playing') throw new Error('Reactions only during play');
+    if (!REACTION_EMOJI.has(emoji)) throw new Error('Unknown reaction');
+    const who =
+      room.players.find((p) => p.telegramId === telegramId) ||
+      room.spectators?.find((p) => p.telegramId === telegramId);
+    if (!who) throw new Error('Not in room');
+    const reaction: RoomReaction = {
+      id: `${Date.now()}-${telegramId}-${Math.random().toString(36).slice(2, 6)}`,
+      fromTelegramId: telegramId,
+      fromName: who.name,
+      emoji,
+      at: Date.now(),
+    };
+    room.reactions = [...(room.reactions || []), reaction].slice(-12);
+    await save(room);
+    return room;
+  });
 }
 
 export async function applyRoomAction(
@@ -380,21 +403,23 @@ export async function applyRoomAction(
   telegramId: number,
   action: { type: string; payload?: unknown },
 ): Promise<Room> {
-  const room = await getRoom(id);
-  if (!room) throw new Error('Room not found');
-  if (room.status !== 'playing' || !room.runtime) throw new Error('Game not in progress');
+  return withRoomLock(id, async () => {
+    const room = await getRoom(id);
+    if (!room) throw new Error('Room not found');
+    if (room.status !== 'playing' || !room.runtime) throw new Error('Game not in progress');
 
-  const seatEntry = Object.entries(room.seatMap).find(([, tid]) => tid === telegramId);
-  if (!seatEntry) throw new Error('Spectators cannot play — watch only');
-  const seat = Number(seatEntry[0]);
+    const seatEntry = Object.entries(room.seatMap).find(([, tid]) => tid === telegramId);
+    if (!seatEntry) throw new Error('Spectators cannot play — watch only');
+    const seat = Number(seatEntry[0]);
 
-  room.runtime = applyAction(room.runtime as never, seat, action as never) as unknown as RoomRuntime;
-  if (room.runtime.game.phase === 'over') {
-    room.status = 'ended';
-    recordSeriesWin(room);
-  }
-  await save(room);
-  return room;
+    room.runtime = applyAction(room.runtime as never, seat, action as never) as unknown as RoomRuntime;
+    if (room.runtime.game.phase === 'over') {
+      room.status = 'ended';
+      recordSeriesWin(room);
+    }
+    await save(room);
+    return room;
+  });
 }
 
 export async function deleteRoom(id: string): Promise<void> {

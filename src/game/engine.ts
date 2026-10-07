@@ -74,6 +74,10 @@ export interface Game {
   housesLeft: number;
   /** Hotels still in the bank. */
   hotelsLeft: number;
+  /** Achievement: escaped jail with doubles this game. */
+  escapedJail: boolean;
+  /** Achievement: won at least one auction this game. */
+  wonAuction: boolean;
 }
 
 function emptyProps(): Record<number, PropState> {
@@ -124,6 +128,8 @@ export function newGame(humanName: string, opponents: number, humanLook?: Player
     paused: false,
     housesLeft: BANK_HOUSES,
     hotelsLeft: BANK_HOTELS,
+    escapedJail: false,
+    wonAuction: false,
   };
 }
 
@@ -150,11 +156,15 @@ export function newMultiplayerGame(seats: SeatSpec[]): Game {
     paused: false,
     housesLeft: BANK_HOUSES,
     hotelsLeft: BANK_HOTELS,
+    escapedJail: false,
+    wonAuction: false,
   };
 }
 
-/** Backfill bank stock for older saved/serialized games. */
+/** Backfill bank stock / flags for older saved/serialized games. */
 export function ensureBankStock(g: Game): void {
+  if (typeof g.escapedJail !== 'boolean') g.escapedJail = false;
+  if (typeof g.wonAuction !== 'boolean') g.wonAuction = false;
   if (typeof g.housesLeft === 'number' && typeof g.hotelsLeft === 'number') return;
   let houses = 0;
   let hotels = 0;
@@ -186,11 +196,12 @@ export function rentFor(g: Game, i: number, diceTotal: number, mult = 1): number
     return hasMonopoly(g, sp.group!, st.owner) ? r[0] * 2 : r[0];
   }
   if (sp.type === 'rr') {
-    const n = GROUP_MEMBERS.rr.filter((x) => g.props[x].owner === st.owner && !g.props[x].mortgaged).length;
+    // Official: rent tier from number owned; mortgaged deed itself already returns 0 above.
+    const n = GROUP_MEMBERS.rr.filter((x) => g.props[x].owner === st.owner).length;
     return RR_RENT[n] * mult;
   }
   if (sp.type === 'util') {
-    const n = GROUP_MEMBERS.util.filter((x) => g.props[x].owner === st.owner && !g.props[x].mortgaged).length;
+    const n = GROUP_MEMBERS.util.filter((x) => g.props[x].owner === st.owner).length;
     const m = mult === 2 ? 10 : n === 2 ? 10 : 4;
     return diceTotal * m;
   }
@@ -244,7 +255,7 @@ export function applyBuild(g: Game, i: number): void {
   const st = g.props[i];
   if (st.houses === 4) {
     g.hotelsLeft -= 1;
-    g.housesLeft += 4;
+    g.housesLeft = Math.min(BANK_HOUSES, g.housesLeft + 4);
     st.houses = 5;
   } else {
     g.housesLeft -= 1;

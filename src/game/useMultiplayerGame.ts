@@ -50,11 +50,16 @@ export function useMultiplayerGame(initialRoomId?: string) {
   const acting = useRef(false);
   const profileRef = useRef<PlayerAppearance>(loadPlayerProfile());
 
-  const g: Game = room?.game && (room.status === 'playing' || room.status === 'ended') ? room.game : emptyGame();
-  if (room?.status === 'playing' || room?.status === 'ended') {
-    g.started = true;
-  }
-  if (optimisticRolling) g.rolling = true;
+  const baseGame: Game =
+    room?.game && (room.status === 'playing' || room.status === 'ended') ? room.game : emptyGame();
+  const g: Game =
+    room?.status === 'playing' || room?.status === 'ended'
+      ? {
+          ...baseGame,
+          started: true,
+          rolling: optimisticRolling ? true : baseGame.rolling,
+        }
+      : baseGame;
 
   const applyRoom = useCallback((r: PublicRoom) => {
     setRoom(r);

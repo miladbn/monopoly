@@ -203,8 +203,8 @@ export default function App() {
       won,
       hadMonopoly: hadMono,
       builtHotel,
-      escapedJail: false,
-      wonAuction: false,
+      escapedJail: !!g.escapedJail,
+      wonAuction: !!g.wonAuction,
       seriesWins,
       wasQuickMatch: mode === 'mp' && mp.room?.inviteOnly === false,
     });
@@ -676,6 +676,7 @@ export default function App() {
       {g.phase === 'over' && (
         <GameOverOverlay
           g={g}
+          meId={meId}
           last={
             mode === 'solo'
               ? solo.lastScore

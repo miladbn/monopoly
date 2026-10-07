@@ -113,8 +113,11 @@ export interface Card {
   act: CardAction;
 }
 
+/** Indices of Get Out of Jail Free cards in each deck (must stay in sync with arrays below). */
+export const GETOUT_CARD_INDEX = { CHANCE: 8, CHEST: 4 } as const;
+
 export const CHANCE: Card[] = [
-  { text: 'Advance to Boardwalk.', act: { k: 'move', to: 39 } },
+  { text: 'Advance to Boardwalk.', act: { k: 'move', to: 39, collectGo: true } },
   { text: 'Advance to GO. Collect $200.', act: { k: 'move', to: 0, collectGo: true } },
   { text: 'Advance to Illinois Avenue. If you pass GO, collect $200.', act: { k: 'move', to: 24, collectGo: true } },
   { text: 'Advance to St. Charles Place. If you pass GO, collect $200.', act: { k: 'move', to: 11, collectGo: true } },

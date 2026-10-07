@@ -33,26 +33,47 @@ let shakeDecay = 0.9;
 let flash = 0;
 let flashColor = '255,255,255';
 let shakeTarget: HTMLElement | null = null;
+let wakeCb: (() => void) | null = null;
+let reducedMotion = false;
 
 const rnd = (a: number, b: number) => a + Math.random() * (b - a);
+
+function wake() {
+  wakeCb?.();
+}
 
 export const fx = {
   setShakeTarget(el: HTMLElement | null) {
     shakeTarget = el;
   },
+  /** Called by FxLayer so effects can restart an idle RAF loop. */
+  onWake(cb: (() => void) | null) {
+    wakeCb = cb;
+  },
+  setReducedMotion(value: boolean) {
+    reducedMotion = value;
+  },
+  isBusy() {
+    return particles.length > 0 || texts.length > 0 || shakeAmt > 0.3 || flash > 0.002;
+  },
   shake(amount = 8, decay = 0.88) {
+    if (reducedMotion) return;
     shakeAmt = Math.min(34, Math.max(shakeAmt, amount));
     shakeDecay = decay;
+    wake();
   },
   flash(color = '255,255,255', amount = 0.35) {
+    if (reducedMotion) return;
     flash = Math.max(flash, amount);
     flashColor = color;
+    wake();
   },
   burst(
     x: number,
     y: number,
     opts: { count?: number; colors?: string[]; speed?: number; size?: number; grav?: number; spread?: number; kind?: Particle['kind'] } = {},
   ) {
+    if (reducedMotion) return;
     const {
       count = 18,
       colors = ['#e9c46a', '#fff3cf', '#ffd166'],
@@ -69,7 +90,7 @@ export const fx = {
       particles.push({
         x,
         y,
-        vx: Math.cos(a) * sp * (spread >= Math.PI * 2 ? 1 : 1),
+        vx: Math.cos(a) * sp,
         vy: Math.sin(a) * sp,
         life: 0,
         max: rnd(38, 78),
@@ -81,8 +102,10 @@ export const fx = {
         kind,
       });
     }
+    wake();
   },
   ring(x: number, y: number, color = '#e9c46a') {
+    if (reducedMotion) return;
     particles.push({
       x,
       y,
@@ -97,9 +120,12 @@ export const fx = {
       grav: 0,
       kind: 'ring',
     });
+    wake();
   },
   text(x: number, y: number, text: string, color = '#ffd166', size = 26) {
+    if (reducedMotion) return;
     texts.push({ x, y, vy: -1.5, life: 0, max: 72, text, color, size });
+    wake();
   },
   confetti(x: number, y: number) {
     fx.burst(x, y, {

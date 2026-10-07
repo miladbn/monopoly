@@ -8,6 +8,12 @@ export default function FxLayer() {
     const cv = ref.current!;
     const ctx = cv.getContext('2d', { alpha: true })!;
     let raf = 0;
+
+    const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const syncMotion = () => fx.setReducedMotion(mq.matches);
+    syncMotion();
+    mq.addEventListener?.('change', syncMotion);
+
     const resize = () => {
       const dpr = Math.min(2, window.devicePixelRatio || 1);
       cv.width = Math.floor(window.innerWidth * dpr);
@@ -18,14 +24,25 @@ export default function FxLayer() {
     };
     resize();
     window.addEventListener('resize', resize);
+
     const loop = () => {
       fx.step(ctx, window.innerWidth, window.innerHeight);
-      raf = requestAnimationFrame(loop);
+      if (fx.isBusy()) raf = requestAnimationFrame(loop);
+      else raf = 0;
     };
-    raf = requestAnimationFrame(loop);
+
+    const kick = () => {
+      if (!raf) raf = requestAnimationFrame(loop);
+    };
+    fx.onWake(kick);
+    kick();
+
     return () => {
       cancelAnimationFrame(raf);
+      raf = 0;
+      fx.onWake(null);
       window.removeEventListener('resize', resize);
+      mq.removeEventListener?.('change', syncMotion);
     };
   }, []);
 

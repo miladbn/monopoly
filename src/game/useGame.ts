@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { CHANCE, CHEST, Card, GROUP_MEMBERS, SPACES } from './data';
+import { CHANCE, CHEST, Card, GETOUT_CARD_INDEX, GROUP_MEMBERS, SPACES } from './data';
+import {
+  heldGetOutExclude,
+  returnHeldGetOutsForPlayer,
+  shuffleIndices,
+  takeHeldGetOut,
+  type HeldGetOut,
+} from './decks';
 import {
   AuctionState,
   Game,
@@ -21,6 +28,7 @@ import {
 import { elCenter, fx } from './fx';
 import { makeRng } from './rng';
 import type { PlayerAppearance } from './playerProfile';
+import { canManageProperties, unmortgageCost } from './rules';
 import { dailySeed, saveDailyScore, todayKey } from './settings';
 import { sfx } from './sfx';
 
@@ -64,15 +72,6 @@ function emptyGame(): Game {
   return g;
 }
 
-function shuffled(n: number): number[] {
-  const a = Array.from({ length: n }, (_, i) => i);
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = (Math.random() * (i + 1)) | 0;
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-  return a;
-}
-
 export function useGame() {
   const G = useRef<Game>(emptyGame());
   const [, force] = useState(0);
@@ -82,11 +81,13 @@ export function useGame() {
   const speed = useRef(1);
   const logId = useRef(2);
   const pending = useRef<{ type: string; resolve: (v: unknown) => void; reject: (e: unknown) => void } | null>(null);
-  const chanceDeck = useRef<number[]>(shuffled(16));
-  const chestDeck = useRef<number[]>(shuffled(16));
+  const chanceDeck = useRef<number[]>(shuffleIndices(16, Math.random));
+  const chestDeck = useRef<number[]>(shuffleIndices(16, Math.random));
+  const heldGetOut = useRef<HeldGetOut[]>([]);
   const rng = useRef<() => number>(() => Math.random());
   const dailyMode = useRef(false);
   const lastBuy = useRef<{ space: number; price: number; at: number } | null>(null);
+  const undoTimer = useRef<number | null>(null);
   const [undoUntil, setUndoUntil] = useState(0);
   const [scores, setScores] = useState<HighScore[]>(() => loadScores());
   const [lastScore, setLastScore] = useState<HighScore | null>(null);
@@ -210,9 +211,28 @@ export function useGame() {
     }
   }
 
+  function returnGetOutToDeck(deck: 'CHANCE' | 'CHEST') {
+    const idx = GETOUT_CARD_INDEX[deck];
+    const ref = deck === 'CHANCE' ? chanceDeck : chestDeck;
+    if (!ref.current.includes(idx)) ref.current.push(idx);
+  }
+
+  function useGetOutCard(p: Player): boolean {
+    if (p.getOut <= 0) return false;
+    const deck = takeHeldGetOut(heldGetOut.current, p.id);
+    p.getOut--;
+    if (deck) returnGetOutToDeck(deck);
+    return true;
+  }
+
   function bankrupt(p: Player, creditor: Player | null) {
     const g = S();
     p.bankrupt = true;
+    for (const deck of returnHeldGetOutsForPlayer(heldGetOut.current, p.id)) {
+      returnGetOutToDeck(deck);
+      p.getOut = Math.max(0, p.getOut - 1);
+    }
+    p.getOut = 0;
     const mine = playerProps(g, p.id);
     if (creditor) {
       creditor.cash += p.cash;
@@ -271,9 +291,11 @@ export function useGame() {
   async function stepMove(p: Player, steps: number, collectGo = true) {
     const g = S();
     g.phase = 'moving';
+    sync();
     const dir = steps >= 0 ? 1 : -1;
     const n = Math.abs(steps);
     const per = Math.max(60, 170 - n * 4);
+    // Batch React syncs: every other step + always the last (tokens still animate via CSS).
     for (let k = 0; k < n; k++) {
       p.pos = (p.pos + dir + 40) % 40;
       if (dir === 1 && p.pos === 0 && collectGo) {
@@ -281,7 +303,7 @@ export function useGame() {
         log(`${p.name} passes GO and collects $200.`, '#7ee787');
         fx.flash('233,196,106', 0.16);
       }
-      sync();
+      if (k === n - 1 || k % 2 === 0) sync();
       sfx.step();
       const c = atToken(p);
       fx.burst(c.x, c.y, { count: 2, colors: [p.color], speed: 1.6, size: 3, grav: 0.02 });
@@ -315,7 +337,9 @@ export function useGame() {
     const g = S();
     const list = deck === 'CHANCE' ? CHANCE : CHEST;
     const ref = deck === 'CHANCE' ? chanceDeck : chestDeck;
-    if (!ref.current.length) ref.current = shuffled(16);
+    if (!ref.current.length) {
+      ref.current = shuffleIndices(16, rng.current, heldGetOutExclude(heldGetOut.current));
+    }
     const idx = ref.current.shift()!;
     const card: Card = list[idx];
     g.card = { deck, text: card.text };
@@ -334,10 +358,10 @@ export function useGame() {
     else await sleep(2800);
     g.card = null;
     sync();
-    await applyCard(p, card, diceTotal);
+    await applyCard(p, card, diceTotal, deck);
   }
 
-  async function applyCard(p: Player, card: Card, diceTotal: number) {
+  async function applyCard(p: Player, card: Card, diceTotal: number, deck?: 'CHANCE' | 'CHEST') {
     const g = S();
     const a = card.act;
     switch (a.k) {
@@ -361,7 +385,20 @@ export function useGame() {
           }
         }
         await moveTo(p, target, true);
-        await resolveLanding(p, diceTotal, 2);
+        if (a.kind === 'util') {
+          const st = g.props[target];
+          const owesRent = st.owner !== null && st.owner !== p.id && !st.mortgaged;
+          if (owesRent) {
+            const rolled = await rollDiceAnim(p);
+            const total = rolled[0] + rolled[1];
+            log(`${p.name} re-rolls for utility rent: ${total}.`, p.color);
+            await resolveLanding(p, total, 2);
+          } else {
+            await resolveLanding(p, diceTotal, 2);
+          }
+        } else {
+          await resolveLanding(p, diceTotal, 2);
+        }
         break;
       }
       case 'cash':
@@ -375,6 +412,7 @@ export function useGame() {
         break;
       case 'getout':
         p.getOut++;
+        if (deck) heldGetOut.current.push({ pid: p.id, deck });
         popText(p, 'JAIL FREE!', '#e9c46a');
         break;
       case 'repairs': {
@@ -469,15 +507,19 @@ export function useGame() {
       const ans = (await waitFor<string>('buy')) || 'auction';
       g.buySpace = null;
       if (ans === 'buy') {
-        doBuy(p, i);
+        if (!doBuy(p, i)) {
+          log(`${p.name} declines ${sp.short} — going to auction!`, '#ffd166');
+          await runAuction(i);
+        }
         return;
       }
       log(`${p.name} declines ${sp.short} — going to auction!`, '#ffd166');
       await runAuction(i);
     } else {
       await sleep(1400);
-      if (aiWantsBuy(p, i)) doBuy(p, i);
-      else {
+      if (aiWantsBuy(p, i) && doBuy(p, i)) {
+        /* purchased */
+      } else {
         log(`${p.name} declines ${sp.short} — auction time!`, '#ffd166');
         await runAuction(i);
       }
@@ -487,9 +529,14 @@ export function useGame() {
   function doBuy(p: Player, i: number) {
     const g = S();
     const sp = SPACES[i];
-    p.cash -= sp.price!;
+    const price = sp.price!;
+    if (p.cash < price) {
+      log(`${p.name} cannot afford ${sp.short}.`, '#ffd166');
+      return false;
+    }
+    p.cash -= price;
     g.props[i].owner = p.id;
-    log(`🏷️ ${p.name} buys ${sp.name} for ${money(sp.price!)}.`, p.color);
+    log(`🏷️ ${p.name} buys ${sp.name} for ${money(price)}.`, p.color);
     sfx.buy();
     const c = atSpace(i);
     fx.confetti(c.x, c.y);
@@ -497,13 +544,15 @@ export function useGame() {
     fx.text(c.x, c.y - 26, 'BOUGHT!', p.color, 22);
     fx.shake(6);
     if (p.human) {
-      lastBuy.current = { space: i, price: sp.price!, at: Date.now() };
+      lastBuy.current = { space: i, price, at: Date.now() };
       setUndoUntil(Date.now() + 4000);
-      window.setTimeout(() => {
+      if (undoTimer.current) window.clearTimeout(undoTimer.current);
+      undoTimer.current = window.setTimeout(() => {
         if (lastBuy.current?.space === i) {
           lastBuy.current = null;
           setUndoUntil(0);
         }
+        undoTimer.current = null;
       }, 4000);
     }
     if (sp.group && hasMonopoly(g, sp.group, p.id)) {
@@ -516,6 +565,7 @@ export function useGame() {
       }
     }
     sync();
+    return true;
   }
 
   const undoBuy = useCallback(() => {
@@ -612,12 +662,19 @@ export function useGame() {
     g.auction = null;
     if (high !== null) {
       const w = g.players[high];
-      w.cash -= bid;
-      g.props[i].owner = w.id;
-      log(`🔨 SOLD! ${w.name} wins ${SPACES[i].short} at auction for ${money(bid)}.`, w.color);
-      const c = atSpace(i);
-      fx.confetti(c.x, c.y);
-      fx.shake(8);
+      if (w.cash < bid) raiseFunds(w, bid);
+      if (w.cash >= bid) {
+        w.cash -= bid;
+        g.props[i].owner = w.id;
+        g.wonAuction = true;
+        log(`🔨 SOLD! ${w.name} wins ${SPACES[i].short} at auction for ${money(bid)}.`, w.color);
+        const c = atSpace(i);
+        fx.confetti(c.x, c.y);
+        fx.shake(8);
+      } else {
+        charge(w, bid, null, `for the auction of ${SPACES[i].short}`);
+        log(`Auction void — ${w.name} could not cover ${money(bid)}. ${SPACES[i].short} stays with the Bank.`, '#ffd166');
+      }
     } else {
       log(`No bids — ${SPACES[i].short} stays with the Bank.`);
     }
@@ -636,8 +693,7 @@ export function useGame() {
       const ans = (await waitFor<string>('jail')) || 'roll';
       g.jailChoice = false;
       sync();
-      if (ans === 'card' && p.getOut > 0) {
-        p.getOut--;
+      if (ans === 'card' && useGetOutCard(p)) {
         p.inJail = false;
         log(`${p.name} uses a Get Out of Jail Free card.`, '#e9c46a');
         popText(p, 'FREE!', '#e9c46a');
@@ -650,8 +706,7 @@ export function useGame() {
       }
     } else {
       await sleep(1200);
-      if (p.getOut > 0) {
-        p.getOut--;
+      if (useGetOutCard(p)) {
         p.inJail = false;
         log(`${p.name} uses a Get Out of Jail Free card.`, '#e9c46a');
         return true;
@@ -667,6 +722,7 @@ export function useGame() {
     if (d[0] === d[1]) {
       p.inJail = false;
       p.jailTurns = 0;
+      g.escapedJail = true;
       log(`${p.name} rolls doubles and escapes jail!`, '#7ee787');
       popText(p, 'ESCAPE!', '#7ee787');
       await stepMove(p, d[0] + d[1]);
@@ -695,7 +751,7 @@ export function useGame() {
     sfx.dice();
     for (let k = 0; k < 9; k++) {
       g.dice = [1 + ((rng.current() * 6) | 0), 1 + ((rng.current() * 6) | 0)];
-      sync();
+      if (k % 3 === 0 || k === 8) sync();
       await sleep(55);
     }
     const d: [number, number] = [1 + ((rng.current() * 6) | 0), 1 + ((rng.current() * 6) | 0)];
@@ -868,18 +924,15 @@ export function useGame() {
     if (pending.current) pending.current.reject(new Abort());
     dailyMode.current = !!opts?.daily;
     rng.current = opts?.daily ? makeRng(dailySeed()) : () => Math.random();
-    const shuffleWith = (n: number) => {
-      const a = Array.from({ length: n }, (_, i) => i);
-      for (let i = a.length - 1; i > 0; i--) {
-        const j = (rng.current() * (i + 1)) | 0;
-        [a[i], a[j]] = [a[j], a[i]];
-      }
-      return a;
-    };
-    chanceDeck.current = shuffleWith(16);
-    chestDeck.current = shuffleWith(16);
+    heldGetOut.current = [];
+    chanceDeck.current = shuffleIndices(16, rng.current);
+    chestDeck.current = shuffleIndices(16, rng.current);
     logId.current = 2;
     lastBuy.current = null;
+    if (undoTimer.current) {
+      window.clearTimeout(undoTimer.current);
+      undoTimer.current = null;
+    }
     setUndoUntil(0);
     G.current = newGame(name, opponents, look);
     if (opts?.daily) {
@@ -895,6 +948,13 @@ export function useGame() {
   const toMenu = useCallback(() => {
     gen.current++;
     if (pending.current) pending.current.reject(new Abort());
+    heldGetOut.current = [];
+    lastBuy.current = null;
+    if (undoTimer.current) {
+      window.clearTimeout(undoTimer.current);
+      undoTimer.current = null;
+    }
+    setUndoUntil(0);
     G.current = emptyGame();
     paused.current = false;
     sync();
@@ -920,8 +980,9 @@ export function useGame() {
   const build = useCallback(
     (i: number) => {
       const g = G.current;
+      if (!canManageProperties(g, 0)) return;
       const p = g.players[0];
-      if (!canBuild(g, i)) return;
+      if (!canBuild(g, i) || g.props[i]?.owner !== 0) return;
       p.cash -= SPACES[i].houseCost!;
       applyBuild(g, i);
       const c = atSpace(i);
@@ -938,6 +999,7 @@ export function useGame() {
   const sellHouse = useCallback(
     (i: number) => {
       const g = G.current;
+      if (!canManageProperties(g, 0) || g.props[i]?.owner !== 0) return;
       if (!canSellHouse(g, i)) return;
       applySellHouse(g, i);
       g.players[0].cash += SPACES[i].houseCost! / 2;
@@ -950,6 +1012,7 @@ export function useGame() {
   const mortgage = useCallback(
     (i: number) => {
       const g = G.current;
+      if (!canManageProperties(g, 0) || g.props[i]?.owner !== 0) return;
       if (!canMortgage(g, i)) return;
       g.props[i].mortgaged = true;
       g.players[0].cash += SPACES[i].price! / 2;
@@ -962,9 +1025,10 @@ export function useGame() {
   const unmortgage = useCallback(
     (i: number) => {
       const g = G.current;
+      if (!canManageProperties(g, 0)) return;
       const st = g.props[i];
-      const cost = Math.round((SPACES[i].price! / 2) * 1.1);
-      if (!st.mortgaged || st.owner !== 0 || g.players[0].cash < cost) return;
+      const cost = unmortgageCost(SPACES[i].price!);
+      if (!st?.mortgaged || st.owner !== 0 || g.players[0].cash < cost) return;
       st.mortgaged = false;
       g.players[0].cash -= cost;
       log(`You lift the mortgage on ${SPACES[i].short} for ${money(cost)}.`, '#7ee787');

@@ -1,4 +1,11 @@
-import { CHANCE, CHEST, Card, GROUP_MEMBERS, SPACES } from './data';
+import { CHANCE, CHEST, Card, GETOUT_CARD_INDEX, GROUP_MEMBERS, SPACES } from './data';
+import {
+  heldGetOutExclude,
+  returnHeldGetOutsForPlayer,
+  shuffleIndices,
+  takeHeldGetOut,
+  type HeldGetOut,
+} from './decks';
 import {
   AuctionState,
   Game,
@@ -22,15 +29,6 @@ import {
 import { makeRng } from './rng';
 export { makeRng };
 
-function shuffled(n: number, rng: () => number): number[] {
-  const a = Array.from({ length: n }, (_, i) => i);
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = (rng() * (i + 1)) | 0;
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-  return a;
-}
-
 export interface MpRuntime {
   game: Game;
   chanceDeck: number[];
@@ -43,10 +41,14 @@ export interface MpRuntime {
   pendingRentMult: number;
   /** Card waiting for human ack before apply */
   pendingCard: Card | null;
+  /** Deck the pending card was drawn from (for Get Out tracking). */
+  pendingCardDeck: 'CHANCE' | 'CHEST' | null;
   /** After doubles, player rolls again — track within turn */
   awaitingExtraRoll: boolean;
   /** Current winning auction bid */
   auctionBid: number;
+  /** Get Out of Jail Free cards held out of their decks. */
+  heldGetOut: HeldGetOut[];
   /** Pending human↔human trade offer */
   pendingTrade: {
     from: number;
@@ -168,9 +170,28 @@ function raiseFunds(rt: MpRuntime, p: Player, needed: number) {
   }
 }
 
+function returnGetOutToDeck(rt: MpRuntime, deck: 'CHANCE' | 'CHEST') {
+  const idx = GETOUT_CARD_INDEX[deck];
+  const pile = deck === 'CHANCE' ? rt.chanceDeck : rt.chestDeck;
+  if (!pile.includes(idx)) pile.push(idx);
+}
+
+function useGetOutCard(rt: MpRuntime, p: Player): boolean {
+  if (p.getOut <= 0) return false;
+  const deck = takeHeldGetOut(rt.heldGetOut, p.id);
+  p.getOut--;
+  if (deck) returnGetOutToDeck(rt, deck);
+  return true;
+}
+
 function bankrupt(rt: MpRuntime, p: Player, creditor: Player | null) {
   const g = rt.game;
   p.bankrupt = true;
+  for (const deck of returnHeldGetOutsForPlayer(rt.heldGetOut, p.id)) {
+    returnGetOutToDeck(rt, deck);
+    p.getOut = Math.max(0, p.getOut - 1);
+  }
+  p.getOut = 0;
   const mine = playerProps(g, p.id);
   if (creditor) {
     creditor.cash += p.cash;
@@ -240,15 +261,21 @@ function rollDice(rt: MpRuntime): [number, number] {
   return d;
 }
 
-function doBuy(rt: MpRuntime, p: Player, i: number) {
+function doBuy(rt: MpRuntime, p: Player, i: number): boolean {
   const g = rt.game;
   const sp = SPACES[i];
-  p.cash -= sp.price!;
+  const price = sp.price!;
+  if (p.cash < price) {
+    pushLog(rt, `${p.name} cannot afford ${sp.short}.`, '#ffd166');
+    return false;
+  }
+  p.cash -= price;
   g.props[i].owner = p.id;
-  pushLog(rt, `${p.name} buys ${sp.name} for ${money(sp.price!)}.`, p.color);
+  pushLog(rt, `${p.name} buys ${sp.name} for ${money(price)}.`, p.color);
   if (sp.group && hasMonopoly(g, sp.group, p.id)) {
     pushLog(rt, `${p.name} completes the ${sp.group.toUpperCase()} monopoly!`, '#e9c46a');
   }
+  return true;
 }
 
 function aiValue(rt: MpRuntime, p: Player, i: number): number {
@@ -274,7 +301,7 @@ function aiWantsBuy(rt: MpRuntime, p: Player, i: number): boolean {
   return value >= sp.price!;
 }
 
-function applyCardEffects(rt: MpRuntime, p: Player, card: Card, diceTotal: number) {
+function applyCardEffects(rt: MpRuntime, p: Player, card: Card, diceTotal: number, deck?: 'CHANCE' | 'CHEST') {
   const g = rt.game;
   const a = card.act;
   switch (a.k) {
@@ -298,7 +325,20 @@ function applyCardEffects(rt: MpRuntime, p: Player, card: Card, diceTotal: numbe
         }
       }
       moveTo(rt, p, target, true);
-      resolveLanding(rt, p, diceTotal, 2);
+      if (a.kind === 'util') {
+        const st = g.props[target];
+        const owesRent = st.owner !== null && st.owner !== p.id && !st.mortgaged;
+        if (owesRent) {
+          const rolled = rollDice(rt);
+          const total = rolled[0] + rolled[1];
+          pushLog(rt, `${p.name} re-rolls for utility rent: ${total}.`, p.color);
+          resolveLanding(rt, p, total, 2);
+        } else {
+          resolveLanding(rt, p, diceTotal, 2);
+        }
+      } else {
+        resolveLanding(rt, p, diceTotal, 2);
+      }
       break;
     }
     case 'cash':
@@ -312,6 +352,7 @@ function applyCardEffects(rt: MpRuntime, p: Player, card: Card, diceTotal: numbe
       break;
     case 'getout':
       p.getOut++;
+      if (deck) rt.heldGetOut.push({ pid: p.id, deck });
       break;
     case 'repairs': {
       let houses = 0;
@@ -344,11 +385,12 @@ function drawCard(rt: MpRuntime, p: Player, deck: 'CHANCE' | 'CHEST', diceTotal:
   const ref = deck === 'CHANCE' ? 'chanceDeck' : 'chestDeck';
   if (!rt[ref].length) {
     const rng = restoreRng(rt);
-    rt[ref] = shuffled(16, rng);
+    rt[ref] = shuffleIndices(16, rng, heldGetOutExclude(rt.heldGetOut));
   }
   const idx = rt[ref].shift()!;
   const card = list[idx];
   rt.pendingCard = card;
+  rt.pendingCardDeck = deck;
   rt.pendingRentMult = 1;
   rt.game.card = { deck, text: card.text };
   rt.game.phase = 'card';
@@ -363,8 +405,7 @@ function offerPurchase(rt: MpRuntime, p: Player, i: number) {
     rt.game.buySpace = i;
     return;
   }
-  if (aiWantsBuy(rt, p, i)) {
-    doBuy(rt, p, i);
+  if (aiWantsBuy(rt, p, i) && doBuy(rt, p, i)) {
     afterLandingResolved(rt, p);
   } else {
     pushLog(rt, `${p.name} declines ${SPACES[i].short} — auction time!`, '#ffd166');
@@ -403,10 +444,21 @@ function endAuction(rt: MpRuntime) {
   g.auction = null;
   if (a && a.high !== null && rt.auctionBid > 0) {
     const w = g.players[a.high];
-    const bid = Math.min(w.cash, rt.auctionBid);
-    w.cash -= bid;
-    g.props[a.space].owner = w.id;
-    pushLog(rt, `SOLD! ${w.name} wins ${SPACES[a.space].short} at auction for ${money(bid)}.`, w.color);
+    const bid = rt.auctionBid;
+    if (w.cash < bid) raiseFunds(rt, w, bid);
+    if (w.cash >= bid) {
+      w.cash -= bid;
+      g.props[a.space].owner = w.id;
+      g.wonAuction = true;
+      pushLog(rt, `SOLD! ${w.name} wins ${SPACES[a.space].short} at auction for ${money(bid)}.`, w.color);
+    } else {
+      charge(rt, w, bid, null, `for the auction of ${SPACES[a.space].short}`);
+      pushLog(
+        rt,
+        `Auction void — ${w.name} could not cover ${money(bid)}. ${SPACES[a.space].short} stays with the Bank.`,
+        '#ffd166',
+      );
+    }
   } else {
     pushLog(rt, `No bids — ${SPACES[a?.space ?? 0].short} stays with the Bank.`);
   }
@@ -548,14 +600,16 @@ function resolveLanding(rt: MpRuntime, p: Player, diceTotal: number, mult = 1) {
 
 function applyPendingCard(rt: MpRuntime, p: Player) {
   const card = rt.pendingCard;
+  const deck = rt.pendingCardDeck;
   const diceTotal = rt.game.lastGain || 7;
   rt.pendingCard = null;
+  rt.pendingCardDeck = null;
   rt.game.card = null;
   if (!card) {
     afterLandingResolved(rt, p);
     return;
   }
-  applyCardEffects(rt, p, card, diceTotal);
+  applyCardEffects(rt, p, card, diceTotal, deck ?? undefined);
   // applyCardEffects may have set another phase (buy/card/jail). If still mid-resolve, don't force.
   if (rt.game.phase === 'card' || rt.game.phase === 'buy' || rt.game.phase === 'auction') return;
   if (p.inJail) {
@@ -606,8 +660,7 @@ function beginTurn(rt: MpRuntime) {
       return;
     }
     // AI jail decision
-    if (p.getOut > 0) {
-      p.getOut--;
+    if (useGetOutCard(rt, p)) {
       p.inJail = false;
       pushLog(rt, `${p.name} uses a Get Out of Jail Free card.`, '#e9c46a');
       g.phase = 'ai';
@@ -627,6 +680,7 @@ function beginTurn(rt: MpRuntime) {
     if (d[0] === d[1]) {
       p.inJail = false;
       p.jailTurns = 0;
+      g.escapedJail = true;
       pushLog(rt, `${p.name} rolls doubles and escapes jail!`, '#7ee787');
       stepMove(rt, p, d[0] + d[1]);
       resolveLanding(rt, p, d[0] + d[1]);
@@ -754,8 +808,8 @@ export function createRuntime(
     calls++;
     return rng();
   };
-  const chanceDeck = shuffled(16, wrapped);
-  const chestDeck = shuffled(16, wrapped);
+  const chanceDeck = shuffleIndices(16, wrapped);
+  const chestDeck = shuffleIndices(16, wrapped);
   const game = newMultiplayerGame(seats);
   const rt: MpRuntime = {
     game,
@@ -766,8 +820,10 @@ export function createRuntime(
     rngCalls: calls,
     pendingRentMult: 1,
     pendingCard: null,
+    pendingCardDeck: null,
     awaitingExtraRoll: false,
     auctionBid: 0,
+    heldGetOut: [],
     pendingTrade: null,
   };
   beginTurn(rt);
@@ -787,8 +843,14 @@ function assertHumanTurn(rt: MpRuntime, seat: number, allowPhases: string[]) {
   if (g.turn !== seat) throw new Error('Not your turn');
 }
 
+function ensureRuntime(rt: MpRuntime): void {
+  if (!Array.isArray(rt.heldGetOut)) rt.heldGetOut = [];
+  if (rt.pendingCardDeck === undefined) rt.pendingCardDeck = null;
+}
+
 export function applyAction(rt: MpRuntime, seat: number, action: MpAction): MpRuntime {
   const g = rt.game;
+  ensureRuntime(rt);
   ensureBankStock(g);
   const p = g.players[seat];
 
@@ -804,8 +866,7 @@ export function applyAction(rt: MpRuntime, seat: number, action: MpAction): MpRu
       if (!g.jailChoice || !p.inJail) throw new Error('Not in jail choice');
       const ans = String(action.payload || 'roll');
       g.jailChoice = false;
-      if (ans === 'card' && p.getOut > 0) {
-        p.getOut--;
+      if (ans === 'card' && useGetOutCard(rt, p)) {
         p.inJail = false;
         pushLog(rt, `${p.name} uses a Get Out of Jail Free card.`, '#e9c46a');
         g.phase = 'roll';
@@ -823,6 +884,7 @@ export function applyAction(rt: MpRuntime, seat: number, action: MpAction): MpRu
       if (d[0] === d[1]) {
         p.inJail = false;
         p.jailTurns = 0;
+        g.escapedJail = true;
         pushLog(rt, `${p.name} rolls doubles and escapes jail!`, '#7ee787');
         stepMove(rt, p, d[0] + d[1]);
         resolveLanding(rt, p, d[0] + d[1]);

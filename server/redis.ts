@@ -54,6 +54,29 @@ export async function kvSet(key: string, value: string, exSeconds?: number): Pro
   }
 }
 
+/** SET key value NX [EX seconds]. Returns true if the key was set. */
+export async function kvSetNx(key: string, value: string, exSeconds?: number): Promise<boolean> {
+  if (!creds()) {
+    if (memory.has(key)) return false;
+    memory.set(key, value);
+    if (exSeconds) {
+      setTimeout(() => {
+        if (memory.get(key) === value) memory.delete(key);
+      }, exSeconds * 1000).unref?.();
+    }
+    return true;
+  }
+  try {
+    const result = exSeconds
+      ? await upstash(['SET', key, value, 'EX', exSeconds, 'NX'])
+      : await upstash(['SET', key, value, 'NX']);
+    return result === 'OK';
+  } catch (e) {
+    console.error('kvSetNx', key, e);
+    throw new Error('Redis lock failed');
+  }
+}
+
 export async function kvDel(key: string): Promise<void> {
   if (!creds()) {
     memory.delete(key);
