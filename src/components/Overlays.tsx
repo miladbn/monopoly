@@ -240,6 +240,12 @@ export function GameOverOverlay({
   onRestart,
   onMenu,
   onShare,
+  onRematch,
+  rematchBusy,
+  seriesLabel,
+  newTitles,
+  isHost,
+  isSpectator,
 }: {
   g: Game;
   last: HighScore | null;
@@ -247,18 +253,40 @@ export function GameOverOverlay({
   onRestart: () => void;
   onMenu: () => void;
   onShare?: () => void;
+  onRematch?: () => void;
+  rematchBusy?: boolean;
+  seriesLabel?: string | null;
+  newTitles?: string[];
+  isHost?: boolean;
+  isSpectator?: boolean;
 }) {
-  const won = !!last?.won;
   const winner = g.winner !== null ? g.players[g.winner] : null;
+  const won = last ? !!last.won : false;
   return (
     <Modal dim={0.85}>
       <div className="popin panel scroll max-h-full w-full max-w-sm overflow-y-auto rounded-xl p-6 text-center">
-        <div className={`deco text-3xl font-bold sm:text-4xl ${won ? 'gold-text' : 'text-[#e07a88]'}`}>
-          {won ? 'Victory' : 'Bankrupt'}
+        <div className={`deco text-3xl font-bold sm:text-4xl ${isSpectator ? 'gold-text' : won ? 'gold-text' : 'text-[#e07a88]'}`}>
+          {isSpectator ? 'Match over' : won ? 'Victory' : 'Bankrupt'}
         </div>
         <p className="mt-2 text-[13px] text-[var(--mist)]">
-          {won ? 'You own Deco City.' : winner ? `${winner.name} rules Deco City.` : 'The bank wins.'}
+          {isSpectator
+            ? winner
+              ? `${winner.name} rules Deco City.`
+              : 'The match has ended.'
+            : won
+              ? 'You own Deco City.'
+              : winner
+                ? `${winner.name} rules Deco City.`
+                : 'The bank wins.'}
         </p>
+        {seriesLabel && (
+          <p className="mt-2 text-[13px] font-semibold text-[var(--brass)]">Series · {seriesLabel}</p>
+        )}
+        {newTitles && newTitles.length > 0 && (
+          <div className="mt-3 rounded-lg bg-[var(--brass)]/15 px-3 py-2 text-[12px] text-[var(--champagne)]">
+            New title{newTitles.length > 1 ? 's' : ''}: {newTitles.join(', ')}
+          </div>
+        )}
 
         {last && (
           <div className="mt-5 rounded-lg bg-black/35 p-4">
@@ -317,8 +345,23 @@ export function GameOverOverlay({
               Share result
             </button>
           )}
+          {onRematch && isHost && (
+            <button
+              type="button"
+              disabled={rematchBusy}
+              onClick={onRematch}
+              className="btn btn-gold w-full py-2.5"
+            >
+              {rematchBusy ? 'Starting rematch…' : 'Rematch (best of 3)'}
+            </button>
+          )}
+          {onRematch && !isHost && (
+            <p className="text-[12px] text-[var(--mist)]">Waiting for host to rematch…</p>
+          )}
           <div className="flex gap-2">
-            <button type="button" onClick={onRestart} className="btn btn-gold flex-1 py-2.5">Play again</button>
+            <button type="button" onClick={onRestart} className="btn btn-gold flex-1 py-2.5">
+              {onRematch ? 'Leave' : 'Play again'}
+            </button>
             <button type="button" onClick={onMenu} className="btn btn-dark flex-1 py-2.5">Menu</button>
           </div>
         </div>

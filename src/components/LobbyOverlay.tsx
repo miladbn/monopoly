@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { titleLabel } from '../game/achievements';
 import {
   inviteUrl,
   roomCodeFromInput,
@@ -20,7 +21,9 @@ export default function LobbyOverlay({
   onStart,
   onLeave,
   onCreate,
+  onQuickMatch,
   onJoin,
+  onSpectate,
   onAppearance,
   onKick,
   onLock,
@@ -33,8 +36,10 @@ export default function LobbyOverlay({
   onReady: (v: boolean) => void;
   onStart: () => void;
   onLeave: () => void;
-  onCreate: () => void;
+  onCreate: (mode?: 'invite' | 'public') => void;
+  onQuickMatch: () => void;
   onJoin: (code: string) => void;
+  onSpectate?: (code: string) => void;
   onAppearance?: (appearance: PlayerAppearance) => void;
   onKick?: (telegramId: number) => void;
   onLock?: (locked: boolean) => void;
@@ -66,7 +71,7 @@ export default function LobbyOverlay({
           <div className="relative text-center">
             <h1 className="deco brand-in text-3xl font-bold gold-text">Lobby</h1>
             <p className="mt-2 text-[13px] text-[var(--mist)]">
-              Invite-only rooms — share a code or link. Pick your look first.
+              Quick Match finds a public table, or host a private room.
             </p>
           </div>
           {error && (
@@ -76,9 +81,22 @@ export default function LobbyOverlay({
             <PlayerAppearancePicker value={appearance} onChange={setLook} compact />
           </div>
           <div className="relative mt-5 space-y-2">
-            <button type="button" disabled={busy} onClick={onCreate} className="btn btn-gold w-full py-3.5 text-base">
-              {busy ? 'Creating…' : 'Create room'}
+            <button
+              type="button"
+              disabled={busy}
+              onClick={onQuickMatch}
+              className="btn btn-gold pulse-glow w-full py-3.5 text-base"
+            >
+              {busy ? 'Matching…' : 'Quick Match'}
             </button>
+            <div className="grid grid-cols-2 gap-2">
+              <button type="button" disabled={busy} onClick={() => onCreate('invite')} className="btn btn-dark py-3 text-sm">
+                Private room
+              </button>
+              <button type="button" disabled={busy} onClick={() => onCreate('public')} className="btn btn-dark py-3 text-sm">
+                Public lobby
+              </button>
+            </div>
             <div className="flex gap-2">
               <input
                 value={code}
@@ -99,6 +117,16 @@ export default function LobbyOverlay({
                 Join
               </button>
             </div>
+            {onSpectate && (
+              <button
+                type="button"
+                disabled={busy || code.length < 4}
+                onClick={() => onSpectate(code)}
+                className="btn btn-dark w-full py-2.5 text-sm"
+              >
+                Spectate live game
+              </button>
+            )}
             <button type="button" onClick={onLeave} className="btn btn-dark w-full py-3 text-sm">
               Back to solo
             </button>
@@ -136,7 +164,8 @@ export default function LobbyOverlay({
         <div className="text-center">
           <h1 className="deco text-3xl font-bold gold-text">Room {room.id}</h1>
           <p className="mt-2 text-[13px] text-[var(--mist)]">
-            {room.players.length}/{room.maxPlayers} · invite only
+            {room.players.length}/{room.maxPlayers} ·{' '}
+            {room.inviteOnly === false ? 'public lobby' : 'invite only'}
             {room.joinLocked ? ' · locked' : ''} · empty seats fill with AI
           </p>
           <p className="mt-1 text-[12px] text-[var(--champagne)]/80">
@@ -167,6 +196,11 @@ export default function LobbyOverlay({
               </span>
               <span className="min-w-0 flex-1 truncate font-semibold">
                 {p.name}
+                {p.title ? (
+                  <span className="ml-1.5 text-[10px] font-medium text-[var(--champagne)]/80">
+                    {titleLabel(p.title) || p.title}
+                  </span>
+                ) : null}
                 {p.telegramId === room.hostTelegramId ? (
                   <span className="ml-1.5 text-[11px] font-medium text-[var(--brass)]">host</span>
                 ) : null}

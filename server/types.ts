@@ -4,6 +4,7 @@ export interface RoomPlayer {
   avatar?: string;
   pieceToken?: string;
   pieceColor?: string;
+  title?: string;
   ready: boolean;
   seat: number;
   lastSeenAt?: number;
@@ -11,6 +12,21 @@ export interface RoomPlayer {
 }
 
 export type RoomStatus = 'lobby' | 'playing' | 'ended';
+
+export interface RoomReaction {
+  id: string;
+  fromTelegramId: number;
+  fromName: string;
+  emoji: string;
+  at: number;
+}
+
+export interface RoomSeries {
+  /** First player to this many wins takes the series (default 2 = best of 3). */
+  target: number;
+  wins: Record<string, number>;
+  gamesPlayed: number;
+}
 
 /** Opaque multiplayer runtime (serialized MpRuntime) */
 export type RoomRuntime = {
@@ -27,9 +43,11 @@ export interface Room {
   chatId?: number;
   hostTelegramId: number;
   players: RoomPlayer[];
+  /** Watch-only seats (late join / after open spectate). */
+  spectators?: RoomPlayer[];
   status: RoomStatus;
   maxPlayers: number;
-  /** Invite-only (always code-gated); when true, refuse joins after lobby full intent */
+  /** Invite-only (code-gated). False = listed for Quick Match. */
   inviteOnly?: boolean;
   /** Host locked lobby — no new joins */
   joinLocked?: boolean;
@@ -37,6 +55,8 @@ export interface Room {
   createdAt: number;
   runtime: RoomRuntime | null;
   seatMap: Record<number, number>;
+  reactions?: RoomReaction[];
+  series?: RoomSeries;
 }
 
 export interface PublicRoom {
@@ -44,6 +64,7 @@ export interface PublicRoom {
   chatId?: number;
   hostTelegramId: number;
   players: RoomPlayer[];
+  spectators?: RoomPlayer[];
   status: RoomStatus;
   maxPlayers: number;
   inviteOnly?: boolean;
@@ -54,6 +75,10 @@ export interface PublicRoom {
   game: (RoomRuntime['game'] & { pendingTrade?: unknown }) | null;
   seatMap: Record<number, number>;
   mySeat?: number;
+  /** True when this user is spectating (no seat). */
+  isSpectator?: boolean;
+  reactions?: RoomReaction[];
+  series?: RoomSeries;
 }
 
 export function toPublicRoom(room: Room, telegramId?: number): PublicRoom {
@@ -61,16 +86,24 @@ export function toPublicRoom(room: Room, telegramId?: number): PublicRoom {
     telegramId !== undefined
       ? room.players.find((p) => p.telegramId === telegramId)?.seat
       : undefined;
+  const isSpectator =
+    telegramId !== undefined &&
+    mySeat === undefined &&
+    !!room.spectators?.some((s) => s.telegramId === telegramId);
   const now = Date.now();
-  const players = room.players.map((p) => ({
+  const enrich = (p: RoomPlayer) => ({
     ...p,
     connected: !p.lastSeenAt ? true : now - p.lastSeenAt < 45000,
-  }));
+  });
+  const players = room.players.map(enrich);
+  const spectators = (room.spectators || []).map(enrich);
+  const reactions = (room.reactions || []).filter((r) => now - r.at < 8000).slice(-10);
   return {
     id: room.id,
     chatId: room.chatId,
     hostTelegramId: room.hostTelegramId,
     players,
+    spectators,
     status: room.status,
     maxPlayers: room.maxPlayers,
     inviteOnly: room.inviteOnly ?? true,
@@ -85,5 +118,8 @@ export function toPublicRoom(room: Room, telegramId?: number): PublicRoom {
       : null,
     seatMap: room.seatMap,
     mySeat,
+    isSpectator,
+    reactions,
+    series: room.series,
   };
 }

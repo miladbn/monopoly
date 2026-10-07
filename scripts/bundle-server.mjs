@@ -53,12 +53,19 @@ export function botReport(): Promise<{
   recent: { id: number; name: string; username?: string; at: number; event: 'start' | 'open' }[];
 }>;
 `,
-  'server-bundle/rooms.d.ts': `export function startRoom(roomId: string, telegramId: number, fillAi?: boolean): Promise<unknown>;
+  'server-bundle/rooms.d.ts': `export function createRoom(opts: Record<string, unknown>): Promise<unknown>;
+export function quickMatch(opts: Record<string, unknown>): Promise<unknown>;
+export function joinRoom(id: string, player: Record<string, unknown>): Promise<unknown>;
+export function joinAsSpectator(id: string, player: Record<string, unknown>): Promise<unknown>;
+export function startRoom(roomId: string, telegramId: number, fillAi?: boolean): Promise<unknown>;
+export function rematchRoom(roomId: string, telegramId: number): Promise<unknown>;
+export function postReaction(roomId: string, telegramId: number, emoji: string): Promise<unknown>;
 export function applyRoomAction(roomId: string, telegramId: number, action: { type: string; payload?: unknown }): Promise<unknown>;
-export function setPlayerAppearance(roomId: string, telegramId: number, appearance: { pieceToken: string; pieceColor: string }): Promise<unknown>;
+export function setPlayerAppearance(roomId: string, telegramId: number, appearance: { pieceToken: string; pieceColor: string; title?: string }): Promise<unknown>;
 export function heartbeat(roomId: string, telegramId: number): Promise<unknown>;
 export function kickPlayer(roomId: string, hostId: number, targetId: number): Promise<unknown>;
 export function setJoinLocked(roomId: string, hostId: number, locked: boolean): Promise<unknown>;
+export function toPublicRoom(room: unknown, telegramId?: number): unknown;
 `,
   'server-bundle/bot.d.ts': `export function handleTelegramWebhook(update: unknown): Promise<void>;
 `,

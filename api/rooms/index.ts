@@ -12,20 +12,6 @@ function json(res: VercelResponse, status: number, data: unknown) {
   res.status(status).json(data);
 }
 
-async function redisCommand(command: (string | number)[]): Promise<unknown> {
-  const url = process.env.UPSTASH_REDIS_REST_URL?.replace(/\/$/, '');
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
-  if (!url || !token) throw new Error('Redis not configured');
-  const r = await fetch(url, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(command),
-  });
-  const data = (await r.json()) as { result?: unknown; error?: string };
-  if (!r.ok || data.error) throw new Error(data.error || `Upstash ${r.status}`);
-  return data.result;
-}
-
 function validateInitData(initData: string) {
   const token = process.env.BOT_TOKEN;
   if (!token) throw new Error('BOT_TOKEN missing');
@@ -63,13 +49,6 @@ function displayName(u: { first_name?: string; last_name?: string; username?: st
   return (n || u.username || `Player${u.id}`).slice(0, 14);
 }
 
-function roomId() {
-  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let s = '';
-  for (let i = 0; i < 6; i++) s += alphabet[(Math.random() * alphabet.length) | 0];
-  return s;
-}
-
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'OPTIONS') {
     cors(res);
@@ -99,44 +78,35 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const hostName = displayName(user);
     const pieceToken = typeof body.pieceToken === 'string' ? body.pieceToken : undefined;
     const pieceColor = typeof body.pieceColor === 'string' ? body.pieceColor : undefined;
-    const id = roomId();
-    const room = {
-      id,
-      hostTelegramId: user.id,
-      players: [
-        {
-          telegramId: user.id,
-          name: hostName,
-          avatar: user.photo_url,
-          pieceToken,
-          pieceColor,
-          ready: true,
-          seat: 0,
-        },
-      ],
-      status: 'lobby',
-      maxPlayers: 4,
-      version: 1,
-      createdAt: Date.now(),
-      runtime: null,
-      seatMap: { 0: user.id },
-    };
+    const title = typeof body.title === 'string' ? body.title : undefined;
+    const mode = String(body.mode || 'invite').toLowerCase();
 
-    await redisCommand(['SET', `deco:room:${id}`, JSON.stringify(room), 'EX', 86400]);
-    try {
-      const { noteRoom } = await import('../../server-bundle/stats.js');
-      await noteRoom();
-    } catch (e) {
-      console.error('noteRoom', e);
+    const { createRoom, quickMatch, toPublicRoom } = await import('../../server-bundle/rooms.js');
+
+    if (mode === 'quick') {
+      const room = await quickMatch({
+        telegramId: user.id,
+        name: hostName,
+        avatar: user.photo_url,
+        pieceToken,
+        pieceColor,
+        title,
+      });
+      return json(res, 200, { room: toPublicRoom(room, user.id) });
     }
 
-    return json(res, 201, {
-      room: {
-        ...room,
-        game: null,
-        mySeat: 0,
-      },
+    const inviteOnly = mode !== 'public';
+    const room = await createRoom({
+      hostTelegramId: user.id,
+      hostName,
+      hostAvatar: user.photo_url,
+      pieceToken,
+      pieceColor,
+      title,
+      inviteOnly,
     });
+
+    return json(res, 201, { room: toPublicRoom(room, user.id) });
   } catch (e) {
     console.error('POST /api/rooms', e);
     return json(res, 500, { error: e instanceof Error ? e.message : String(e) });

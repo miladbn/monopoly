@@ -3,15 +3,19 @@ import {
   AuctionState,
   Game,
   Player,
+  applyBuild,
+  applySellHouse,
   canBuild,
   canMortgage,
   canSellHouse,
+  ensureBankStock,
   hasMonopoly,
   liveCount,
   money,
   netWorth,
   newMultiplayerGame,
   playerProps,
+  reclaimBuildings,
   rentFor,
 } from './engine';
 
@@ -148,7 +152,7 @@ function raiseFunds(rt: MpRuntime, p: Player, needed: number) {
     if (!sellable.length) break;
     sellable.sort((a, b) => (SPACES[b].houseCost || 0) - (SPACES[a].houseCost || 0));
     const i = sellable[0];
-    g.props[i].houses--;
+    applySellHouse(g, i);
     p.cash += (SPACES[i].houseCost || 0) / 2;
     pushLog(rt, `${p.name} sells a building on ${SPACES[i].short} for ${money((SPACES[i].houseCost || 0) / 2)}.`, '#ffb4a2');
   }
@@ -173,12 +177,15 @@ function bankrupt(rt: MpRuntime, p: Player, creditor: Player | null) {
     for (const i of mine) {
       const st = g.props[i];
       creditor.cash += (st.houses * (SPACES[i].houseCost || 0)) / 2;
-      st.houses = 0;
+      reclaimBuildings(g, i);
       st.owner = creditor.id;
     }
     pushLog(rt, `${p.name} is BANKRUPT! All assets go to ${creditor.name}.`, '#ff6b6b');
   } else {
-    for (const i of mine) g.props[i] = { owner: null, houses: 0, mortgaged: false };
+    for (const i of mine) {
+      reclaimBuildings(g, i);
+      g.props[i] = { owner: null, houses: 0, mortgaged: false };
+    }
     pushLog(rt, `${p.name} is BANKRUPT! Assets return to the Bank.`, '#ff6b6b');
   }
   p.cash = 0;
@@ -698,10 +705,10 @@ function aiDevelop(rt: MpRuntime, p: Player) {
     const options = playerProps(g, p.id).filter((i) => canBuild(g, i) && p.cash - (SPACES[i].houseCost || 0) > 180);
     if (!options.length) break;
     options.sort((a, b) => (SPACES[b].rents![1] || 0) - (SPACES[a].rents![1] || 0));
-    const i = options[0];
-    p.cash -= SPACES[i].houseCost!;
-    g.props[i].houses++;
-    pushLog(rt, `${p.name} builds on ${SPACES[i].short} (${g.props[i].houses === 5 ? 'HOTEL' : g.props[i].houses + ' house'}).`, p.color);
+      const i = options[0];
+      p.cash -= SPACES[i].houseCost!;
+      applyBuild(g, i);
+      pushLog(rt, `${p.name} builds on ${SPACES[i].short} (${g.props[i].houses === 5 ? 'HOTEL' : g.props[i].houses + ' house'}).`, p.color);
   }
   for (const i of playerProps(g, p.id)) {
     const st = g.props[i];
@@ -782,6 +789,7 @@ function assertHumanTurn(rt: MpRuntime, seat: number, allowPhases: string[]) {
 
 export function applyAction(rt: MpRuntime, seat: number, action: MpAction): MpRuntime {
   const g = rt.game;
+  ensureBankStock(g);
   const p = g.players[seat];
 
   switch (action.type) {
@@ -897,7 +905,7 @@ export function applyAction(rt: MpRuntime, seat: number, action: MpAction): MpRu
       const i = Number(action.payload);
       if (!canBuild(g, i) || g.props[i].owner !== seat) throw new Error('Cannot build');
       p.cash -= SPACES[i].houseCost!;
-      g.props[i].houses++;
+      applyBuild(g, i);
       pushLog(rt, `${p.name} builds on ${SPACES[i].short}.`, '#7ee787');
       break;
     }
@@ -905,7 +913,7 @@ export function applyAction(rt: MpRuntime, seat: number, action: MpAction): MpRu
       assertHumanTurn(rt, seat, ['manage', 'roll']);
       const i = Number(action.payload);
       if (!canSellHouse(g, i) || g.props[i].owner !== seat) throw new Error('Cannot sell');
-      g.props[i].houses--;
+      applySellHouse(g, i);
       p.cash += SPACES[i].houseCost! / 2;
       pushLog(rt, `${p.name} sells a building on ${SPACES[i].short}.`, '#ffd166');
       break;

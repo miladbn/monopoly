@@ -1,3 +1,12 @@
+import { useState } from 'react';
+import {
+  ACHIEVEMENTS,
+  getEquippedTitle,
+  isUnlocked,
+  listUnlocked,
+  setEquippedTitle,
+  titleLabel,
+} from '../game/achievements';
 import {
   COLOR_CHOICES,
   TOKEN_CHOICES,
@@ -13,6 +22,12 @@ export default function PlayerAppearancePicker({
   onChange: (next: PlayerAppearance) => void;
   compact?: boolean;
 }) {
+  const unlocked = listUnlocked();
+  const [equipped, setEquipped] = useState(() => getEquippedTitle());
+  const equip = (id: string | null) => {
+    setEquippedTitle(id);
+    setEquipped(id);
+  };
   return (
     <div className={compact ? 'space-y-2' : 'space-y-3'}>
       <div className="flex items-center gap-2.5">
@@ -73,6 +88,34 @@ export default function PlayerAppearancePicker({
           );
         })}
       </div>
+
+      {unlocked.length > 0 && (
+        <div>
+          <div className="mb-1 text-[11px] font-medium text-[var(--mist)]">
+            Title{equipped ? ` · ${titleLabel(equipped)}` : ''}
+          </div>
+          <div className="flex flex-wrap gap-1">
+            <button
+              type="button"
+              className={`btn px-2 py-1 text-[10px] ${!equipped ? 'btn-gold' : 'btn-dark'}`}
+              onClick={() => equip(null)}
+            >
+              None
+            </button>
+            {ACHIEVEMENTS.filter((a) => isUnlocked(a.id)).map((a) => (
+              <button
+                key={a.id}
+                type="button"
+                title={a.blurb}
+                className={`btn px-2 py-1 text-[10px] ${equipped === a.id ? 'btn-gold' : 'btn-dark'}`}
+                onClick={() => equip(a.id)}
+              >
+                {a.title}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

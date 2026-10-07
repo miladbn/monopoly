@@ -8,6 +8,7 @@ export interface PublicPlayer {
   avatar?: string;
   pieceToken?: string;
   pieceColor?: string;
+  title?: string;
   ready: boolean;
   seat: number;
   lastSeenAt?: number;
@@ -19,9 +20,26 @@ export interface PlayerAppearance {
   color: string;
 }
 
-function appearanceBody(appearance?: PlayerAppearance) {
-  if (!appearance) return {};
-  return { pieceToken: appearance.token, pieceColor: appearance.color };
+export interface RoomReaction {
+  id: string;
+  fromTelegramId: number;
+  fromName: string;
+  emoji: string;
+  at: number;
+}
+
+export interface RoomSeries {
+  target: number;
+  wins: Record<string, number>;
+  gamesPlayed: number;
+}
+
+function appearanceBody(appearance?: PlayerAppearance, title?: string | null) {
+  if (!appearance && !title) return {};
+  return {
+    ...(appearance ? { pieceToken: appearance.token, pieceColor: appearance.color } : {}),
+    ...(title ? { title } : {}),
+  };
 }
 
 export interface PendingTrade {
@@ -37,6 +55,7 @@ export interface PublicRoom {
   chatId?: number;
   hostTelegramId: number;
   players: PublicPlayer[];
+  spectators?: PublicPlayer[];
   status: 'lobby' | 'playing' | 'ended';
   maxPlayers: number;
   inviteOnly?: boolean;
@@ -46,6 +65,9 @@ export interface PublicRoom {
   game: (Game & { pendingTrade?: PendingTrade | null }) | null;
   seatMap: Record<number, number>;
   mySeat?: number;
+  isSpectator?: boolean;
+  reactions?: RoomReaction[];
+  series?: RoomSeries | null;
 }
 
 async function request<T>(path: string, opts: RequestInit & { initData?: string } = {}): Promise<T> {
@@ -83,12 +105,26 @@ async function request<T>(path: string, opts: RequestInit & { initData?: string 
   }
 }
 
-export async function createRoom(appearance?: PlayerAppearance): Promise<PublicRoom> {
+export async function createRoom(
+  appearance?: PlayerAppearance,
+  opts?: { mode?: 'invite' | 'public' | 'quick'; title?: string | null },
+): Promise<PublicRoom> {
   const data = await request<{ room: PublicRoom }>('/api/rooms', {
     method: 'POST',
-    body: JSON.stringify({ initData: getInitData(), ...appearanceBody(appearance) }),
+    body: JSON.stringify({
+      initData: getInitData(),
+      mode: opts?.mode || 'invite',
+      ...appearanceBody(appearance, opts?.title),
+    }),
   });
   return data.room;
+}
+
+export async function quickMatch(
+  appearance?: PlayerAppearance,
+  title?: string | null,
+): Promise<PublicRoom> {
+  return createRoom(appearance, { mode: 'quick', title });
 }
 
 export async function fetchRoom(id: string): Promise<PublicRoom> {
@@ -98,27 +134,52 @@ export async function fetchRoom(id: string): Promise<PublicRoom> {
   return data.room;
 }
 
-export async function joinRoom(id: string, appearance?: PlayerAppearance): Promise<PublicRoom> {
+export async function joinRoom(
+  id: string,
+  appearance?: PlayerAppearance,
+  title?: string | null,
+): Promise<PublicRoom> {
   const data = await request<{ room: PublicRoom }>('/api/room', {
     method: 'POST',
     body: JSON.stringify({
       action: 'join',
       roomId: id.trim().toUpperCase(),
       initData: getInitData(),
-      ...appearanceBody(appearance),
+      ...appearanceBody(appearance, title),
     }),
   });
   return data.room;
 }
 
-export async function setPlayerAppearance(id: string, appearance: PlayerAppearance): Promise<PublicRoom> {
+export async function spectateRoom(
+  id: string,
+  appearance?: PlayerAppearance,
+  title?: string | null,
+): Promise<PublicRoom> {
+  const data = await request<{ room: PublicRoom }>('/api/room', {
+    method: 'POST',
+    body: JSON.stringify({
+      action: 'spectate',
+      roomId: id.trim().toUpperCase(),
+      initData: getInitData(),
+      ...appearanceBody(appearance, title),
+    }),
+  });
+  return data.room;
+}
+
+export async function setPlayerAppearance(
+  id: string,
+  appearance: PlayerAppearance,
+  title?: string | null,
+): Promise<PublicRoom> {
   const data = await request<{ room: PublicRoom }>('/api/room', {
     method: 'POST',
     body: JSON.stringify({
       action: 'appearance',
       roomId: id,
       initData: getInitData(),
-      ...appearanceBody(appearance),
+      ...appearanceBody(appearance, title),
     }),
   });
   return data.room;
@@ -171,6 +232,24 @@ export async function sendAction(id: string, type: MpActionType, payload?: unkno
   });
   return data.room;
 }
+
+export async function sendReaction(id: string, emoji: string): Promise<PublicRoom> {
+  const data = await request<{ room: PublicRoom }>('/api/room', {
+    method: 'POST',
+    body: JSON.stringify({ action: 'react', roomId: id, emoji, initData: getInitData() }),
+  });
+  return data.room;
+}
+
+export async function rematchRoom(id: string): Promise<PublicRoom> {
+  const data = await request<{ room: PublicRoom }>('/api/room', {
+    method: 'POST',
+    body: JSON.stringify({ action: 'rematch', roomId: id, initData: getInitData() }),
+  });
+  return data.room;
+}
+
+export const REACTION_EMOJIS = ['😂', '🔥', '👏', '😱', '💀', '🎩', '💰', '👀'] as const;
 
 export interface ChannelLink {
   title: string;

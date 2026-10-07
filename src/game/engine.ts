@@ -48,6 +48,10 @@ export interface AuctionState {
   message: string;
 }
 
+/** Classic Monopoly building bank. */
+export const BANK_HOUSES = 32;
+export const BANK_HOTELS = 12;
+
 export interface Game {
   players: Player[];
   props: Record<number, PropState>;
@@ -66,6 +70,10 @@ export interface Game {
   lastGain: number;
   started: boolean;
   paused: boolean;
+  /** Houses still in the bank (not on the board). */
+  housesLeft: number;
+  /** Hotels still in the bank. */
+  hotelsLeft: number;
 }
 
 function emptyProps(): Record<number, PropState> {
@@ -114,6 +122,8 @@ export function newGame(humanName: string, opponents: number, humanLook?: Player
     lastGain: 0,
     started: true,
     paused: false,
+    housesLeft: BANK_HOUSES,
+    hotelsLeft: BANK_HOTELS,
   };
 }
 
@@ -138,7 +148,24 @@ export function newMultiplayerGame(seats: SeatSpec[]): Game {
     lastGain: 0,
     started: true,
     paused: false,
+    housesLeft: BANK_HOUSES,
+    hotelsLeft: BANK_HOTELS,
   };
+}
+
+/** Backfill bank stock for older saved/serialized games. */
+export function ensureBankStock(g: Game): void {
+  if (typeof g.housesLeft === 'number' && typeof g.hotelsLeft === 'number') return;
+  let houses = 0;
+  let hotels = 0;
+  for (const sp of SPACES) {
+    if (!sp.price) continue;
+    const h = g.props[sp.i]?.houses || 0;
+    if (h === 5) hotels++;
+    else houses += h;
+  }
+  g.housesLeft = Math.max(0, BANK_HOUSES - houses);
+  g.hotelsLeft = Math.max(0, BANK_HOTELS - hotels);
 }
 
 export function ownedInGroup(g: Game, group: string, owner: number): number {
@@ -184,6 +211,7 @@ export function netWorth(g: Game, pid: number): number {
 }
 
 export function canBuild(g: Game, i: number): boolean {
+  ensureBankStock(g);
   const sp = SPACES[i];
   const st = g.props[i];
   if (sp.type !== 'prop' || st.owner === null) return false;
@@ -192,15 +220,60 @@ export function canBuild(g: Game, i: number): boolean {
   if (st.houses >= 5) return false;
   const min = Math.min(...GROUP_MEMBERS[sp.group!].map((x) => g.props[x].houses));
   if (st.houses > min) return false;
-  return g.players[st.owner].cash >= (sp.houseCost || 0);
+  if (g.players[st.owner].cash < (sp.houseCost || 0)) return false;
+  // Hotel needs a free hotel and returns 4 houses to the bank.
+  if (st.houses === 4) return g.hotelsLeft >= 1;
+  return g.housesLeft >= 1;
 }
 
 export function canSellHouse(g: Game, i: number): boolean {
+  ensureBankStock(g);
   const sp = SPACES[i];
   const st = g.props[i];
   if (sp.type !== 'prop' || st.houses === 0) return false;
   const max = Math.max(...GROUP_MEMBERS[sp.group!].map((x) => g.props[x].houses));
-  return st.houses >= max;
+  if (st.houses < max) return false;
+  // Demoting a hotel requires 4 houses available in the bank.
+  if (st.houses === 5) return g.housesLeft >= 4;
+  return true;
+}
+
+/** Consume bank stock and place one house/hotel. Caller charges cash. */
+export function applyBuild(g: Game, i: number): void {
+  ensureBankStock(g);
+  const st = g.props[i];
+  if (st.houses === 4) {
+    g.hotelsLeft -= 1;
+    g.housesLeft += 4;
+    st.houses = 5;
+  } else {
+    g.housesLeft -= 1;
+    st.houses += 1;
+  }
+}
+
+/** Return one building to the bank. Caller refunds cash. */
+export function applySellHouse(g: Game, i: number): void {
+  ensureBankStock(g);
+  const st = g.props[i];
+  if (st.houses === 5) {
+    g.hotelsLeft += 1;
+    g.housesLeft -= 4;
+    st.houses = 4;
+  } else {
+    g.housesLeft += 1;
+    st.houses -= 1;
+  }
+}
+
+/** Wipe buildings on a property and return stock to the bank. */
+export function reclaimBuildings(g: Game, i: number): void {
+  ensureBankStock(g);
+  const st = g.props[i];
+  if (!st || st.houses <= 0) return;
+  if (st.houses === 5) g.hotelsLeft = Math.min(BANK_HOTELS, g.hotelsLeft + 1);
+  else g.housesLeft = Math.min(BANK_HOUSES, g.housesLeft + st.houses);
+  st.houses = 0;
 }
 
 export function canMortgage(g: Game, i: number): boolean {

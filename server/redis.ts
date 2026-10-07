@@ -95,6 +95,20 @@ export async function kvScard(key: string): Promise<number> {
   return Number(await upstash(['SCARD', key])) || 0;
 }
 
+export async function kvSmembers(key: string): Promise<string[]> {
+  if (!creds()) return [...(memorySets.get(key) ?? [])];
+  const result = await upstash(['SMEMBERS', key]);
+  return Array.isArray(result) ? result.map((item) => String(item)) : [];
+}
+
+export async function kvSrem(key: string, member: string): Promise<void> {
+  if (!creds()) {
+    memorySets.get(key)?.delete(member);
+    return;
+  }
+  await upstash(['SREM', key, member]);
+}
+
 export async function kvPushRecent(key: string, value: string, keep: number): Promise<void> {
   if (!creds()) {
     const list = memoryLists.get(key) ?? [];

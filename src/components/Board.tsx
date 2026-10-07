@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useRef, useState, type ReactNode } from 'react';
 import { GROUP_COLORS, SPACES, Space, cellCenterPx, edgeOf, gridPos } from '../game/data';
 import { Game } from '../game/engine';
 
@@ -216,36 +216,66 @@ export default function Board({
         </div>
       </div>
 
-      {/* tokens */}
-      {g.players.map((p, idx) => {
-        if (p.bankrupt) return null;
-        const c = cellCenterPx(p.pos, w);
-        const dx = (idx % 2 === 0 ? -1 : 1) * spread;
-        const dy = (idx < 2 ? -1 : 1) * spread;
-        return (
-          <div
-            key={p.id}
-            id={`tok-${p.id}`}
-            className="pointer-events-none absolute z-20 flex items-center justify-center rounded-full"
-            style={{
-              left: c.x,
-              top: c.y,
-              width: tokenSize,
-              height: tokenSize,
-              marginLeft: dx - tokenSize / 2,
-              marginTop: dy - tokenSize / 2,
-              fontSize: tokenSize * 0.62,
-              background: `radial-gradient(circle at 35% 30%, #ffffff33, ${p.color}dd)`,
-              boxShadow: `0 0 0 2px ${p.color}, 0 4px 10px rgba(0,0,0,.6)${
-                g.turn === p.id ? `, 0 0 16px 2px ${p.color}` : ''
-              }`,
-              transition: 'left .16s linear, top .16s linear, box-shadow .2s ease',
-            }}
-          >
-            <span style={{ filter: p.inJail ? 'grayscale(1)' : undefined }}>{p.token}</span>
-          </div>
-        );
-      })}
+      {/* tokens — fan out when multiple pieces share a tile */}
+      {(() => {
+        const byPos = new Map<number, typeof g.players>();
+        for (const p of g.players) {
+          if (p.bankrupt) continue;
+          const list = byPos.get(p.pos) || [];
+          list.push(p);
+          byPos.set(p.pos, list);
+        }
+        const nodes: ReactNode[] = [];
+        byPos.forEach((pile, pos) => {
+          const c = cellCenterPx(pos, w);
+          const n = pile.length;
+          pile.forEach((p, slot) => {
+            let dx = 0;
+            let dy = 0;
+            if (n === 1) {
+              dx = 0;
+              dy = 0;
+            } else if (n === 2) {
+              dx = (slot === 0 ? -1 : 1) * spread * 0.85;
+              dy = (slot === 0 ? -0.35 : 0.35) * spread;
+            } else if (n === 3) {
+              const angle = (-Math.PI / 2) + (slot * (2 * Math.PI)) / 3;
+              dx = Math.cos(angle) * spread * 1.05;
+              dy = Math.sin(angle) * spread * 1.05;
+            } else {
+              const angle = (-Math.PI / 2) + (slot * (2 * Math.PI)) / n;
+              dx = Math.cos(angle) * spread * 1.15;
+              dy = Math.sin(angle) * spread * 1.15;
+            }
+            nodes.push(
+              <div
+                key={p.id}
+                id={`tok-${p.id}`}
+                className="pointer-events-none absolute z-20 flex items-center justify-center rounded-full"
+                style={{
+                  left: c.x,
+                  top: c.y,
+                  width: tokenSize,
+                  height: tokenSize,
+                  marginLeft: dx - tokenSize / 2,
+                  marginTop: dy - tokenSize / 2,
+                  fontSize: tokenSize * 0.62,
+                  zIndex: 20 + slot + (g.turn === p.id ? 4 : 0),
+                  background: `radial-gradient(circle at 35% 30%, #ffffff33, ${p.color}dd)`,
+                  boxShadow: `0 0 0 2px ${p.color}, 0 4px 10px rgba(0,0,0,.6)${
+                    g.turn === p.id ? `, 0 0 16px 2px ${p.color}` : ''
+                  }`,
+                  transition: 'left .16s linear, top .16s linear, margin .16s ease, box-shadow .2s ease',
+                }}
+                title={p.name}
+              >
+                <span style={{ filter: p.inJail ? 'grayscale(1)' : undefined }}>{p.token}</span>
+              </div>,
+            );
+          });
+        });
+        return nodes;
+      })()}
     </div>
   );
 }

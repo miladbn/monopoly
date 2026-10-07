@@ -36,6 +36,8 @@ export function CenterPiece({ g, meId = 0 }: { g: Game; meId?: number }) {
   const cur = g.players[g.turn];
   const total = g.dice[0] + g.dice[1];
   const mine = cur?.id === meId;
+  const housesLeft = g.housesLeft ?? 32;
+  const hotelsLeft = g.hotelsLeft ?? 12;
   return (
     <div className="relative flex h-full w-full flex-col items-center justify-center gap-[3%] px-3 text-center">
       <div className="deco text-[clamp(14px,3.6vmin,38px)] font-bold leading-none gold-text">Deco City</div>
@@ -56,7 +58,9 @@ export function CenterPiece({ g, meId = 0 }: { g: Game; meId?: number }) {
         <span aria-hidden>{cur.token}</span>
         <span style={{ color: cur.color }}>{mine ? 'Your turn' : `${cur.name} playing…`}</span>
       </div>
-      <div className="text-[clamp(9px,1.2vmin,12px)] font-medium text-[var(--mist)]/80">Round {g.round}</div>
+      <div className="text-[clamp(9px,1.2vmin,12px)] font-medium text-[var(--mist)]/80">
+        Round {g.round} · 🏠{housesLeft} 🏨{hotelsLeft}
+      </div>
     </div>
   );
 }
@@ -66,11 +70,13 @@ export function PlayerCard({
   pid,
   active,
   disconnected,
+  title,
 }: {
   g: Game;
   pid: number;
   active: boolean;
   disconnected?: boolean;
+  title?: string | null;
 }) {
   const p = g.players[pid];
   const props = playerProps(g, pid);
@@ -100,9 +106,11 @@ export function PlayerCard({
           <div className="flex items-baseline justify-between gap-1">
             <span className="truncate text-[12px] font-bold" style={{ color: p.color }}>
               {p.name}
+              {title && <span className="ml-1 text-[9px] font-semibold text-[var(--champagne)]/75">{title}</span>}
               {p.inJail && <span className="ml-1 text-[9px] font-semibold text-orange-300/90">jail</span>}
               {p.getOut > 0 && <span className="ml-1 text-[9px] font-semibold text-[var(--brass)]">card×{p.getOut}</span>}
               {disconnected && <span className="ml-1 text-[9px] font-semibold text-[#e07a88]">away</span>}
+              {p.bankrupt && <span className="ml-1 text-[9px] font-semibold text-[#e07a88]">out</span>}
             </span>
             <span className="shrink-0 text-[12px] font-extrabold tabular-nums text-emerald-300/90">{money(p.cash)}</span>
           </div>

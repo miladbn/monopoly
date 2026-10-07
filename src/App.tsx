@@ -15,9 +15,15 @@ import {
   PauseOverlay,
   StartScreen,
 } from './components/Overlays';
+import ReactionBar from './components/ReactionBar';
 import TradeOverlay from './components/TradeOverlay';
-import { SPACES } from './game/data';
-import { money, netWorth } from './game/engine';
+import {
+  evaluateGameAchievements,
+  titleLabel,
+  unlockAchievement,
+} from './game/achievements';
+import { GROUP_MEMBERS, SPACES } from './game/data';
+import { hasMonopoly, money, netWorth } from './game/engine';
 import { fx } from './game/fx';
 import { loadPlayerProfile, type PlayerAppearance } from './game/playerProfile';
 import { settings, todayDailyBest, type HudTab } from './game/settings';
@@ -55,7 +61,14 @@ export default function App() {
   const active = mode === 'mp' || wantMp ? mp : solo;
   const g = active.g;
   const respond = active.respond;
-  const meId = mode === 'mp' || (wantMp && mp.room) ? (mp.mySeat ?? 0) : 0;
+  const meId =
+    mode === 'mp' || (wantMp && mp.room)
+      ? mp.mySeat !== undefined
+        ? mp.mySeat
+        : mp.isSpectator
+          ? -1
+          : 0
+      : 0;
 
   const shakeRef = useRef<HTMLDivElement>(null);
   const boxRef = useRef<HTMLDivElement>(null);
@@ -76,6 +89,8 @@ export default function App() {
   const [report, setReport] = useState<BotReport | null>(null);
   const [reportError, setReportError] = useState<string | null>(null);
   const [reportLoading, setReportLoading] = useState(false);
+  const [newTitles, setNewTitles] = useState<string[]>([]);
+  const achievementsDone = useRef<string | null>(null);
   const onTile = useCallback((i: number) => setInspect(i), []);
 
   const loadReport = useCallback(async () => {
@@ -156,10 +171,49 @@ export default function App() {
   }, [wantMp, mp.room]);
 
   const me = g.players[meId];
+  const watching = mode === 'mp' && !!mp.watching;
   const myTurn =
     !!me &&
     !g.paused &&
+    !watching &&
     (mode === 'mp' ? mp.isMyTurn : !!g.players[g.turn]?.human && g.turn === meId);
+
+  useEffect(() => {
+    if (g.phase !== 'over') {
+      achievementsDone.current = null;
+      return;
+    }
+    const key = `${mode}-${mp.room?.id || 'solo'}-${g.round}-${g.winner}`;
+    if (achievementsDone.current === key) return;
+    achievementsDone.current = key;
+    const pid = mode === 'mp' ? (mp.mySeat ?? -1) : 0;
+    const won = g.winner === pid;
+    const hadMono =
+      pid >= 0 &&
+      Object.keys(GROUP_MEMBERS).some(
+        (gr) => gr !== 'rr' && gr !== 'util' && hasMonopoly(g, gr, pid),
+      );
+    const builtHotel =
+      pid >= 0 && SPACES.some((s) => s.price && g.props[s.i]?.owner === pid && g.props[s.i].houses === 5);
+    const seriesWins =
+      mode === 'mp' && mp.room?.series && getWebApp()?.initDataUnsafe?.user?.id
+        ? mp.room.series.wins[String(getWebApp()!.initDataUnsafe!.user!.id)] || 0
+        : 0;
+    const earned = evaluateGameAchievements({
+      won,
+      hadMonopoly: hadMono,
+      builtHotel,
+      escapedJail: false,
+      wonAuction: false,
+      seriesWins,
+      wasQuickMatch: mode === 'mp' && mp.room?.inviteOnly === false,
+    });
+    if (mode === 'mp' && mp.isSpectator) unlockAchievement('spectate');
+    const labels = earned
+      .map((id) => titleLabel(id))
+      .filter((t): t is string => !!t);
+    if (labels.length) setNewTitles(labels);
+  }, [g.phase, g.winner, g.round, mode, mp.room?.id, mp.room?.series, mp.room?.inviteOnly, mp.mySeat, mp.isSpectator, g]);
 
   const primary = useCallback(() => {
     if (!g.started || g.paused || g.phase === 'over') return;
@@ -285,6 +339,13 @@ export default function App() {
         </button>
       );
     }
+    if (watching) {
+      return (
+        <div className="flex min-h-[44px] items-center justify-center rounded-lg bg-black/25 px-2 text-[12px] font-medium text-[var(--champagne)] sm:min-h-[48px] sm:text-[13px]">
+          {mp.isSpectator ? 'Spectating' : 'You’re out — watching'} · {g.players[g.turn]?.name ?? ''}’s turn
+        </div>
+      );
+    }
     const label =
       g.phase === 'moving'
         ? 'Moving…'
@@ -299,6 +360,16 @@ export default function App() {
       </div>
     );
   };
+
+  const seriesLabel = (() => {
+    const s = mp.room?.series;
+    if (!s || mode !== 'mp') return null;
+    const parts = mp.room!.players.map((p) => {
+      const w = s.wins[String(p.telegramId)] || 0;
+      return `${p.name.split(' ')[0]} ${w}`;
+    });
+    return `${parts.join(' · ')} (first to ${s.target})`;
+  })();
 
   const goSoloMenu = () => {
     setWantMp(false);
@@ -430,12 +501,21 @@ export default function App() {
                     pid={p.id}
                     active={g.turn === p.id}
                     disconnected={mode === 'mp' && p.human && mpPlayer?.connected === false}
+                    title={mode === 'mp' ? titleLabel(mpPlayer?.title) : undefined}
                   />
                 );
               })}
             </div>
 
             {g.started && <div className="action-dock shrink-0">{actionBar()}</div>}
+
+            {mode === 'mp' && g.started && g.phase !== 'over' && (
+              <ReactionBar
+                reactions={mp.room?.reactions || []}
+                disabled={mp.busy}
+                onReact={(emoji) => void mp.react(emoji)}
+              />
+            )}
 
             {mode === 'solo' && solo.canUndoBuy && (
               <button
@@ -479,18 +559,26 @@ export default function App() {
               {hudTab === 'feed' ? (
                 <LogPanel g={g} />
               ) : hudTab === 'deeds' ? (
-                <DeedList
-                  g={g}
-                  meId={meId}
-                  onBuild={active.build}
-                  onSell={active.sellHouse}
-                  onMortgage={active.mortgage}
-                  onUnmortgage={active.unmortgage}
-                  onInspect={setInspect}
-                />
+                meId < 0 ? (
+                  <p className="py-4 text-center text-[12px] text-[var(--mist)]">Spectating — no deeds to manage.</p>
+                ) : (
+                  <DeedList
+                    g={g}
+                    meId={meId}
+                    onBuild={watching ? () => undefined : active.build}
+                    onSell={watching ? () => undefined : active.sellHouse}
+                    onMortgage={watching ? () => undefined : active.mortgage}
+                    onUnmortgage={watching ? () => undefined : active.unmortgage}
+                    onInspect={setInspect}
+                  />
+                )
               ) : (
                 <p className="px-1 py-2 text-center text-[12px] text-[var(--mist)]">
-                  {myTurn ? 'Your turn — use the button above.' : `${g.players[g.turn]?.name ?? 'Rival'} is playing.`}
+                  {watching
+                    ? 'Watching the table — send a reaction anytime.'
+                    : myTurn
+                      ? 'Your turn — use the button above.'
+                      : `${g.players[g.turn]?.name ?? 'Rival'} is playing.`}
                 </p>
               )}
             </div>
@@ -572,8 +660,10 @@ export default function App() {
           onReady={(v) => void mp.ready(v)}
           onStart={() => void mp.startMatch()}
           onLeave={goSoloMenu}
-          onCreate={() => void mp.hostCreate()}
+          onCreate={(m) => void mp.hostCreate(m)}
+          onQuickMatch={() => void mp.findQuickMatch()}
           onJoin={(code) => void mp.join(code)}
+          onSpectate={(code) => void mp.spectate(code)}
           onAppearance={(look) => void mp.syncAppearance(look)}
           onKick={(id) => void mp.kick(id)}
           onLock={(locked) => void mp.setLocked(locked)}
@@ -586,10 +676,27 @@ export default function App() {
       {g.phase === 'over' && (
         <GameOverOverlay
           g={g}
-          last={mode === 'solo' ? solo.lastScore : null}
+          last={
+            mode === 'solo'
+              ? solo.lastScore
+              : {
+                  name: me?.name || 'You',
+                  score: me ? netWorth(g, meId) : 0,
+                  worth: me ? netWorth(g, meId) : 0,
+                  rounds: g.round,
+                  won: g.winner === meId,
+                  date: new Date().toISOString(),
+                }
+          }
           scores={mode === 'solo' ? solo.scores : []}
           onRestart={mode === 'solo' ? restart : goSoloMenu}
           onMenu={goSoloMenu}
+          onRematch={mode === 'mp' ? () => void mp.rematch() : undefined}
+          rematchBusy={mp.busy}
+          seriesLabel={seriesLabel}
+          newTitles={newTitles}
+          isHost={mode === 'mp' && !!mp.room && getWebApp()?.initDataUnsafe?.user?.id === mp.room.hostTelegramId}
+          isSpectator={mode === 'mp' && !!mp.isSpectator}
           onShare={() => {
             const url = renderShareCard({
               g,

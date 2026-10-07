@@ -4,6 +4,8 @@ import {
   AuctionState,
   Game,
   Player,
+  applyBuild,
+  applySellHouse,
   canBuild,
   canMortgage,
   canSellHouse,
@@ -13,6 +15,7 @@ import {
   netWorth,
   newGame,
   playerProps,
+  reclaimBuildings,
   rentFor,
 } from './engine';
 import { elCenter, fx } from './fx';
@@ -191,7 +194,7 @@ export function useGame() {
       if (!sellable.length) break;
       sellable.sort((a, b) => (SPACES[b].houseCost || 0) - (SPACES[a].houseCost || 0));
       const i = sellable[0];
-      g.props[i].houses--;
+      applySellHouse(g, i);
       p.cash += (SPACES[i].houseCost || 0) / 2;
       log(`${p.name} sells a building on ${SPACES[i].short} for ${money((SPACES[i].houseCost || 0) / 2)}.`, '#ffb4a2');
     }
@@ -216,12 +219,15 @@ export function useGame() {
       for (const i of mine) {
         const st = g.props[i];
         creditor.cash += (st.houses * (SPACES[i].houseCost || 0)) / 2;
-        st.houses = 0;
+        reclaimBuildings(g, i);
         st.owner = creditor.id;
       }
       log(`💀 ${p.name} is BANKRUPT! All assets go to ${creditor.name}.`, '#ff6b6b');
     } else {
-      for (const i of mine) g.props[i] = { owner: null, houses: 0, mortgaged: false };
+      for (const i of mine) {
+        reclaimBuildings(g, i);
+        g.props[i] = { owner: null, houses: 0, mortgaged: false };
+      }
       log(`💀 ${p.name} is BANKRUPT! Assets return to the Bank.`, '#ff6b6b');
     }
     p.cash = 0;
@@ -714,7 +720,7 @@ export function useGame() {
       options.sort((a, b) => (SPACES[b].rents![1] || 0) - (SPACES[a].rents![1] || 0));
       const i = options[0];
       p.cash -= SPACES[i].houseCost!;
-      g.props[i].houses++;
+      applyBuild(g, i);
       log(`${p.name} builds on ${SPACES[i].short} (${g.props[i].houses === 5 ? 'HOTEL' : g.props[i].houses + ' house'}).`, p.color);
       const c = atSpace(i);
       fx.burst(c.x, c.y, { count: 10, colors: ['#7ee787', '#2fa85b'], speed: 4, size: 4 });
@@ -917,7 +923,7 @@ export function useGame() {
       const p = g.players[0];
       if (!canBuild(g, i)) return;
       p.cash -= SPACES[i].houseCost!;
-      g.props[i].houses++;
+      applyBuild(g, i);
       const c = atSpace(i);
       sfx.build();
       fx.burst(c.x, c.y, { count: 16, colors: ['#7ee787', '#2fa85b', '#e9c46a'], speed: 5, size: 5 });
@@ -933,7 +939,7 @@ export function useGame() {
     (i: number) => {
       const g = G.current;
       if (!canSellHouse(g, i)) return;
-      g.props[i].houses--;
+      applySellHouse(g, i);
       g.players[0].cash += SPACES[i].houseCost! / 2;
       log(`You sell a building on ${SPACES[i].short}.`, '#ffd166');
       sync();

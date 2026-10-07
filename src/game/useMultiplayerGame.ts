@@ -4,17 +4,22 @@ import {
   fetchRoom,
   joinRoom,
   kickPlayer,
+  quickMatch,
+  rematchRoom,
   roomCodeFromInput,
   sendAction,
   sendHeartbeat,
+  sendReaction,
   setLobbyLock,
   setPlayerAppearance,
   setReady,
+  spectateRoom,
   startRoom,
   type PlayerAppearance,
   type PublicRoom,
 } from '../telegram/api';
 import { getInitData, isTelegram } from '../telegram/webapp';
+import { getEquippedTitle } from './achievements';
 import { settings } from './settings';
 import { Game, newGame } from './engine';
 import { loadPlayerProfile, savePlayerProfile } from './playerProfile';
@@ -137,14 +142,27 @@ export function useMultiplayerGame(initialRoomId?: string) {
     return () => clearInterval(t);
   }, [room?.id, applyRoom]);
 
-  const hostCreate = useCallback(async () => {
+  const hostCreate = useCallback(async (mode: 'invite' | 'public' = 'invite') => {
     setBusy(true);
     setError(null);
     try {
       ensureAuth();
-      applyRoom(await createRoom(profileRef.current));
+      applyRoom(await createRoom(profileRef.current, { mode, title: getEquippedTitle() }));
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not create room');
+    } finally {
+      setBusy(false);
+    }
+  }, [applyRoom]);
+
+  const findQuickMatch = useCallback(async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      ensureAuth();
+      applyRoom(await quickMatch(profileRef.current, getEquippedTitle()));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Quick match failed');
     } finally {
       setBusy(false);
     }
@@ -156,9 +174,25 @@ export function useMultiplayerGame(initialRoomId?: string) {
       setError(null);
       try {
         ensureAuth();
-        applyRoom(await joinRoom(roomCodeFromInput(id), profileRef.current));
+        applyRoom(await joinRoom(roomCodeFromInput(id), profileRef.current, getEquippedTitle()));
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Could not join room');
+      } finally {
+        setBusy(false);
+      }
+    },
+    [applyRoom],
+  );
+
+  const spectate = useCallback(
+    async (id: string) => {
+      setBusy(true);
+      setError(null);
+      try {
+        ensureAuth();
+        applyRoom(await spectateRoom(roomCodeFromInput(id), profileRef.current, getEquippedTitle()));
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Could not spectate');
       } finally {
         setBusy(false);
       }
@@ -219,7 +253,7 @@ export function useMultiplayerGame(initialRoomId?: string) {
       if (!id || room?.status !== 'lobby') return;
       try {
         ensureAuth();
-        applyRoom(await setPlayerAppearance(id, appearance));
+        applyRoom(await setPlayerAppearance(id, appearance, getEquippedTitle()));
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Could not save look');
       }
@@ -302,9 +336,43 @@ export function useMultiplayerGame(initialRoomId?: string) {
     [act],
   );
 
+  const react = useCallback(
+    async (emoji: string) => {
+      const id = roomIdRef.current || room?.id;
+      if (!id) return;
+      try {
+        ensureAuth();
+        applyRoom(await sendReaction(id, emoji));
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Reaction failed');
+      }
+    },
+    [applyRoom, room?.id],
+  );
+
+  const rematch = useCallback(async () => {
+    const id = roomIdRef.current || room?.id;
+    if (!id) return;
+    setBusy(true);
+    setError(null);
+    try {
+      ensureAuth();
+      applyRoom(await rematchRoom(id));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Rematch failed');
+    } finally {
+      setBusy(false);
+    }
+  }, [applyRoom, room?.id]);
+
   const noop = useCallback(() => undefined, []);
   const setSpeed = useCallback((_v: number) => undefined, []);
   const startSolo = useCallback((_name: string, _opp: number, _look?: PlayerAppearance) => undefined, []);
+
+  const isSpectator = !!room?.isSpectator;
+  const meBankrupt =
+    seatIndex !== undefined && !!room?.game?.players?.[seatIndex]?.bankrupt;
+  const watching = isSpectator || meBankrupt;
 
   return {
     room,
@@ -312,10 +380,14 @@ export function useMultiplayerGame(initialRoomId?: string) {
     busy,
     g,
     mySeat: seatIndex,
-    isMyTurn,
+    isMyTurn: isMyTurn && !watching,
+    isSpectator,
+    watching,
     respond,
     hostCreate,
+    findQuickMatch,
     join,
+    spectate,
     ready,
     startMatch,
     leaveLobby,
@@ -328,6 +400,8 @@ export function useMultiplayerGame(initialRoomId?: string) {
     unmortgage,
     proposeTrade,
     respondTrade,
+    react,
+    rematch,
     scores,
     lastScore,
     toMenu: leaveLobby,
