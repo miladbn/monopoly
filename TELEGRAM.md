@@ -25,6 +25,7 @@ In the Vercel project → Settings → Environment Variables:
 | Name | Value |
 |------|--------|
 | `BOT_TOKEN` | from BotFather |
+| `WEBHOOK_SECRET` | random secret for `setWebhook` `secret_token` (falls back to `BOT_TOKEN`) |
 | `WEBAPP_URL` | `https://monopoly-fawn-rho.vercel.app` |
 | `BOT_USERNAME` | `monopoly_gamee_online_bot` |
 | `MINI_APP_SHORT_NAME` | e.g. `app` |
@@ -49,11 +50,19 @@ Redeploy after saving env vars.
 
 ## 4. Set the Telegram webhook
 
-After deploy:
+After deploy, set the webhook **with a secret token** (required by `/api/telegram`):
 
 ```bash
-curl "https://api.telegram.org/bot$BOT_TOKEN/setWebhook?url=https://monopoly-fawn-rho.vercel.app/api/telegram"
+# Prefer a dedicated secret; BOT_TOKEN also works if WEBHOOK_SECRET is unset.
+export WEBHOOK_SECRET="your-long-random-secret"
+
+curl "https://api.telegram.org/bot$BOT_TOKEN/setWebhook" \
+  -d "url=https://monopoly-fawn-rho.vercel.app/api/telegram" \
+  -d "secret_token=$WEBHOOK_SECRET"
 ```
+
+Add `WEBHOOK_SECRET` to Vercel env vars (same value). The handler checks
+`X-Telegram-Bot-Api-Secret-Token` on every POST.
 
 Check:
 

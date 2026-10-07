@@ -39,3 +39,20 @@ export function returnHeldGetOutsForPlayer(held: HeldGetOut[], pid: number): Dec
   }
   return out.reverse();
 }
+
+/**
+ * On bankruptcy: give Get Out cards to the creditor, or return deck kinds to reshuffle into the bank.
+ * Mutates `held` and returns decks that must be pushed back onto chance/chest piles.
+ */
+export function settleGetOutOnBankrupt(
+  held: HeldGetOut[],
+  bankruptPid: number,
+  creditorPid: number | null,
+): { returnToDeck: DeckKind[]; transferred: number } {
+  const decks = returnHeldGetOutsForPlayer(held, bankruptPid);
+  if (creditorPid !== null) {
+    for (const deck of decks) held.push({ pid: creditorPid, deck });
+    return { returnToDeck: [], transferred: decks.length };
+  }
+  return { returnToDeck: decks, transferred: 0 };
+}

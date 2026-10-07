@@ -2,14 +2,16 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { CHANCE, CHEST, Card, GETOUT_CARD_INDEX, GROUP_MEMBERS, SPACES } from './data';
 import {
   heldGetOutExclude,
-  returnHeldGetOutsForPlayer,
+  settleGetOutOnBankrupt,
   shuffleIndices,
   takeHeldGetOut,
   type HeldGetOut,
 } from './decks';
 import {
   AuctionState,
+  emptyMenuGame,
   Game,
+  LogKind,
   Player,
   applyBuild,
   applySellHouse,
@@ -25,6 +27,7 @@ import {
   reclaimBuildings,
   rentFor,
 } from './engine';
+import { normalizeTradeCash, transferTradeDeeds, validateTradeOffer } from './trade';
 import {
   aiAcceptsTrade,
   aiAuctionCap,
@@ -74,15 +77,8 @@ function saveScore(s: HighScore): HighScore[] {
   return all;
 }
 
-function emptyGame(): Game {
-  const g = newGame('You', 3);
-  g.started = false;
-  g.phase = 'menu';
-  return g;
-}
-
 export function useGame() {
-  const G = useRef<Game>(emptyGame());
+  const G = useRef<Game>(emptyMenuGame());
   const [, force] = useState(0);
   const sync = useCallback(() => force((v) => v + 1), []);
   const gen = useRef(0);
@@ -94,6 +90,8 @@ export function useGame() {
   const chestDeck = useRef<number[]>(shuffleIndices(16, Math.random));
   const heldGetOut = useRef<HeldGetOut[]>([]);
   const rng = useRef<() => number>(() => Math.random());
+  const rngSeed = useRef<number | null>(null);
+  const rngCalls = useRef(0);
   const dailyMode = useRef(false);
   const difficulty = useRef<AiDifficulty>('normal');
   const lastBuy = useRef<{ space: number; price: number; at: number } | null>(null);
@@ -104,10 +102,46 @@ export function useGame() {
 
   const S = () => G.current;
 
-  const log = useCallback((text: string, color?: string) => {
+  const bindRng = (seed: number | null) => {
+    if (seed == null) {
+      rngSeed.current = null;
+      rngCalls.current = 0;
+      rng.current = () => Math.random();
+      return;
+    }
+    rngSeed.current = seed;
+    rngCalls.current = 0;
+    const base = makeRng(seed);
+    rng.current = () => {
+      rngCalls.current++;
+      return base();
+    };
+  };
+
+  const restoreBoundRng = (seed: number, calls: number) => {
+    rngSeed.current = seed;
+    const base = makeRng(seed);
+    for (let i = 0; i < calls; i++) base();
+    rngCalls.current = calls;
+    rng.current = () => {
+      rngCalls.current++;
+      return base();
+    };
+  };
+
+  const log = useCallback((text: string, color?: string, kind?: LogKind) => {
     const g = G.current;
-    g.log = [{ id: logId.current++, text, color }, ...g.log].slice(0, 40);
+    g.log = [{ id: logId.current++, text, color, kind }, ...g.log].slice(0, 40);
   }, []);
+
+  const clearUndoBuy = () => {
+    lastBuy.current = null;
+    if (undoTimer.current) {
+      window.clearTimeout(undoTimer.current);
+      undoTimer.current = null;
+    }
+    setUndoUntil(0);
+  };
 
   /* ---------------- timing ---------------- */
   /** speed 1 = normal, 2 = twice as fast. AI pacing uses longer base delays. */
@@ -230,18 +264,18 @@ export function useGame() {
   function useGetOutCard(p: Player): boolean {
     if (p.getOut <= 0) return false;
     const deck = takeHeldGetOut(heldGetOut.current, p.id);
+    if (!deck) return false;
     p.getOut--;
-    if (deck) returnGetOutToDeck(deck);
+    returnGetOutToDeck(deck);
     return true;
   }
 
   function bankrupt(p: Player, creditor: Player | null) {
     const g = S();
     p.bankrupt = true;
-    for (const deck of returnHeldGetOutsForPlayer(heldGetOut.current, p.id)) {
-      returnGetOutToDeck(deck);
-      p.getOut = Math.max(0, p.getOut - 1);
-    }
+    const settled = settleGetOutOnBankrupt(heldGetOut.current, p.id, creditor ? creditor.id : null);
+    if (creditor) creditor.getOut += settled.transferred;
+    for (const deck of settled.returnToDeck) returnGetOutToDeck(deck);
     p.getOut = 0;
     const mine = playerProps(g, p.id);
     if (creditor) {
@@ -252,13 +286,13 @@ export function useGame() {
         reclaimBuildings(g, i);
         st.owner = creditor.id;
       }
-      log(`💀 ${p.name} is BANKRUPT! All assets go to ${creditor.name}.`, '#ff6b6b');
+      log(`💀 ${p.name} is BANKRUPT! All assets go to ${creditor.name}.`, '#ff6b6b', 'bankrupt');
     } else {
       for (const i of mine) {
         reclaimBuildings(g, i);
         g.props[i] = { owner: null, houses: 0, mortgaged: false };
       }
-      log(`💀 ${p.name} is BANKRUPT! Assets return to the Bank.`, '#ff6b6b');
+      log(`💀 ${p.name} is BANKRUPT! Assets return to the Bank.`, '#ff6b6b', 'bankrupt');
     }
     p.cash = 0;
     const { x, y } = atToken(p);
@@ -315,8 +349,10 @@ export function useGame() {
       }
       if (k === n - 1 || k % 2 === 0) sync();
       sfx.step();
-      const c = atToken(p);
-      fx.burst(c.x, c.y, { count: 2, colors: [p.color], speed: 1.6, size: 3, grav: 0.02 });
+      if (k === n - 1 || k % 3 === 0) {
+        const c = atToken(p);
+        fx.burst(c.x, c.y, { count: 2, colors: [p.color], speed: 1.6, size: 3, grav: 0.02 });
+      }
       await sleep(per);
     }
     const c = atSpace(p.pos);
@@ -692,10 +728,16 @@ export function useGame() {
         popText(p, 'FREE!', '#e9c46a');
         return true;
       }
-      if (ans === 'pay' && p.cash >= 50) {
-        charge(p, 50, null, 'bail');
-        p.inJail = false;
-        return true;
+      if (ans === 'pay') {
+        if (p.cash < 50) raiseFunds(p, 50);
+        if (p.cash < 50) {
+          log(`${p.name} cannot raise $50 for bail.`, '#ffd166', 'jail');
+          // fall through to doubles attempt
+        } else {
+          charge(p, 50, null, 'bail');
+          p.inJail = false;
+          return true;
+        }
       }
     } else {
       await sleep(1200);
@@ -861,6 +903,8 @@ export function useGame() {
       logId: logId.current,
       difficulty: difficulty.current,
       dailyMode: dailyMode.current,
+      rngSeed: rngSeed.current ?? undefined,
+      rngCalls: rngSeed.current != null ? rngCalls.current : undefined,
     });
   }
 
@@ -918,10 +962,12 @@ export function useGame() {
             sync();
             persistCheckpoint();
             await waitFor('endturn');
+            clearUndoBuy();
           } else {
             await sleep(1100);
           }
         }
+        clearUndoBuy();
         let guard = 0;
         do {
           g.turn = (g.turn + 1) % g.players.length;
@@ -940,17 +986,12 @@ export function useGame() {
     if (pending.current) pending.current.reject(new Abort());
     dailyMode.current = !!opts?.daily;
     difficulty.current = opts?.difficulty || 'normal';
-    rng.current = opts?.daily ? makeRng(dailySeed()) : () => Math.random();
+    bindRng(opts?.daily ? dailySeed() : (Date.now() ^ ((Math.random() * 1e9) | 0)));
     heldGetOut.current = [];
     chanceDeck.current = shuffleIndices(16, rng.current);
     chestDeck.current = shuffleIndices(16, rng.current);
     logId.current = 2;
-    lastBuy.current = null;
-    if (undoTimer.current) {
-      window.clearTimeout(undoTimer.current);
-      undoTimer.current = null;
-    }
-    setUndoUntil(0);
+    clearUndoBuy();
     clearSoloSave();
     G.current = newGame(name, opponents, look);
     if (opts?.daily) {
@@ -983,13 +1024,12 @@ export function useGame() {
     logId.current = blob.logId || 2;
     difficulty.current = blob.difficulty || 'normal';
     dailyMode.current = !!blob.dailyMode;
-    rng.current = () => Math.random();
-    lastBuy.current = null;
-    if (undoTimer.current) {
-      window.clearTimeout(undoTimer.current);
-      undoTimer.current = null;
+    if (typeof blob.rngSeed === 'number') {
+      restoreBoundRng(blob.rngSeed, blob.rngCalls || 0);
+    } else {
+      bindRng(null);
     }
-    setUndoUntil(0);
+    clearUndoBuy();
     paused.current = false;
     setLastScore(null);
     sync();
@@ -1008,7 +1048,7 @@ export function useGame() {
       undoTimer.current = null;
     }
     setUndoUntil(0);
-    G.current = emptyGame();
+    G.current = emptyMenuGame();
     paused.current = false;
     sync();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1097,31 +1137,26 @@ export function useGame() {
     (rival: number, give: number[], get: number[], cash: number): { ok: boolean; msg: string } => {
       const g = G.current;
       if (!canManageProperties(g, 0)) return { ok: false, msg: 'Wait for your manage phase.' };
-      const me = g.players[0];
+      const normalized = normalizeTradeCash(cash);
+      const check = validateTradeOffer(g, 0, rival, give, get, normalized);
+      if (!check.ok) return { ok: false, msg: check.msg };
       const ai = g.players[rival];
-      if (!give.length && !get.length) return { ok: false, msg: 'Offer something first.' };
-      if (cash > 0 && me.cash < cash) return { ok: false, msg: "You don't have that cash." };
-      if (cash < 0 && ai.cash < -cash) return { ok: false, msg: `${ai.name} can't pay that much.` };
-      if ([...give, ...get].some((i) => g.props[i].houses > 0))
-        return { ok: false, msg: 'Sell buildings before trading that set.' };
 
-      const accepted = aiAcceptsTrade(g, rival, 0, give, get, cash, difficulty.current);
+      const accepted = aiAcceptsTrade(g, rival, 0, give, get, normalized, difficulty.current);
       if (!accepted) {
-        log(`${ai.name} rejects your offer.`, '#ff8f8f');
+        log(`${ai.name} rejects your offer.`, '#ff8f8f', 'trade');
         sfx.pay();
         fx.shake(6);
         sync();
         return { ok: false, msg: `${ai.name} says: "Not a chance."` };
       }
-      give.forEach((i) => (g.props[i].owner = rival));
-      get.forEach((i) => (g.props[i].owner = 0));
-      me.cash -= cash;
-      ai.cash += cash;
+      transferTradeDeeds(g, 0, rival, give, get, normalized);
       log(
         `🤝 Trade with ${ai.name}: you give ${give.map((i) => SPACES[i].short).join(', ') || '—'}${
-          cash > 0 ? ` + ${money(cash)}` : ''
-        } for ${get.map((i) => SPACES[i].short).join(', ') || '—'}${cash < 0 ? ` + ${money(-cash)}` : ''}.`,
+          normalized > 0 ? ` + ${money(normalized)}` : ''
+        } for ${get.map((i) => SPACES[i].short).join(', ') || '—'}${normalized < 0 ? ` + ${money(-normalized)}` : ''}.`,
         '#e9c46a',
+        'trade',
       );
       sfx.buy();
       fx.flash('233,196,106', 0.2);

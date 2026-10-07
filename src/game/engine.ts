@@ -22,10 +22,24 @@ export interface PropState {
   mortgaged: boolean;
 }
 
+/** Structured toast / history categories (optional for older logs). */
+export type LogKind =
+  | 'rent'
+  | 'buy'
+  | 'pay'
+  | 'jail'
+  | 'trade'
+  | 'go'
+  | 'auction'
+  | 'bankrupt'
+  | 'build'
+  | 'info';
+
 export interface LogEntry {
   id: number;
   text: string;
   color?: string;
+  kind?: LogKind;
 }
 
 export type Phase =
@@ -78,6 +92,8 @@ export interface Game {
   escapedJail: boolean;
   /** Achievement: won at least one auction this game. */
   wonAuction: boolean;
+  /** Board configuration id (default classic 40-space). */
+  boardId: string;
 }
 
 function emptyProps(): Record<number, PropState> {
@@ -130,6 +146,7 @@ export function newGame(humanName: string, opponents: number, humanLook?: Player
     hotelsLeft: BANK_HOTELS,
     escapedJail: false,
     wonAuction: false,
+    boardId: 'classic',
   };
 }
 
@@ -158,13 +175,23 @@ export function newMultiplayerGame(seats: SeatSpec[]): Game {
     hotelsLeft: BANK_HOTELS,
     escapedJail: false,
     wonAuction: false,
+    boardId: 'classic',
   };
+}
+
+/** Idle menu shell used before a match starts. */
+export function emptyMenuGame(): Game {
+  const g = newGame('You', 3);
+  g.started = false;
+  g.phase = 'menu';
+  return g;
 }
 
 /** Backfill bank stock / flags for older saved/serialized games. */
 export function ensureBankStock(g: Game): void {
   if (typeof g.escapedJail !== 'boolean') g.escapedJail = false;
   if (typeof g.wonAuction !== 'boolean') g.wonAuction = false;
+  if (!g.boardId) g.boardId = 'classic';
   if (typeof g.housesLeft === 'number' && typeof g.hotelsLeft === 'number') return;
   let houses = 0;
   let hotels = 0;

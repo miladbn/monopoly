@@ -137,7 +137,7 @@ const Tile = memo(function Tile({
   );
 });
 
-export default function Board({
+function Board({
   g,
   onTile,
   onCenter,
@@ -202,11 +202,13 @@ export default function Board({
           );
         })}
 
-        {/* center */}
-        <div
+        {/* center — primary action hit target */}
+        <button
+          type="button"
           onClick={onCenter}
-          className="relative flex cursor-pointer flex-col items-center justify-center overflow-hidden rounded-lg"
+          className="relative flex cursor-pointer flex-col items-center justify-center overflow-hidden rounded-lg border-0 bg-transparent p-0 text-inherit"
           style={{ gridRow: '2 / 11', gridColumn: '2 / 11' }}
+          aria-label="Primary board action"
         >
           <div
             className="pointer-events-none absolute inset-0 opacity-70"
@@ -216,7 +218,7 @@ export default function Board({
             }}
           />
           {children}
-        </div>
+        </button>
       </div>
 
       {/* tokens — fan out when multiple pieces share a tile */}
@@ -282,3 +284,5 @@ export default function Board({
     </div>
   );
 }
+
+export default memo(Board);

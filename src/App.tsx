@@ -18,6 +18,7 @@ import {
 import ReactionBar from './components/ReactionBar';
 import Toast from './components/Toast';
 import TradeOverlay from './components/TradeOverlay';
+import { MpTradeRespondOverlay } from './components/overlays/MpTradeRespondOverlay';
 import {
   evaluateGameAchievements,
   titleLabel,
@@ -248,7 +249,9 @@ export default function App() {
     return () => sfx.stopMusic();
   }, [g.started]);
 
-  const uiModalOpen =
+  const decisionOverlay =
+    g.phase === 'buy' || g.phase === 'auction' || g.phase === 'card' || g.jailChoice;
+  const chromeModalOpen =
     trade ||
     inspect !== null ||
     showOnboarding ||
@@ -258,8 +261,11 @@ export default function App() {
     const onKey = (e: KeyboardEvent) => {
       const k = e.key.toLowerCase();
       if (!g.started) return;
-      // Don't steal keys while trade/inspect/onboarding is up (Escape handled by Modal).
-      if (uiModalOpen) return;
+      // Don't steal keys while trade/inspect/onboarding/pending trade is up.
+      if (chromeModalOpen) return;
+      // Block primary/pause under buy/auction/card/jail — keep B/A/J shortcuts.
+      if ((k === ' ' || k === 'enter') && decisionOverlay) return;
+      if ((k === 'p' || k === 'escape') && decisionOverlay) return;
       if (k === ' ' || k === 'enter') {
         e.preventDefault();
         primary();
@@ -281,7 +287,7 @@ export default function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [g, primary, respond, solo, restart, mode, uiModalOpen]);
+  }, [g, primary, respond, solo, restart, mode, chromeModalOpen, decisionOverlay]);
 
   const score = me ? netWorth(g, meId) : 0;
   const inLobby = wantMp && (!mp.room || mp.room.status === 'lobby');
@@ -295,7 +301,7 @@ export default function App() {
     if (g.phase === 'roll' && myTurn && g.jailChoice) {
       return (
         <div className="grid grid-cols-3 gap-2">
-          <button type="button" className="btn btn-gold min-h-[44px] py-2.5 text-xs" disabled={!me || me.cash < 50} onClick={() => respond('jail', 'pay')}>
+          <button type="button" className="btn btn-gold min-h-[44px] py-2.5 text-xs" disabled={!me} onClick={() => respond('jail', 'pay')}>
             Pay $50
           </button>
           <button type="button" className="btn btn-dark min-h-[44px] py-2.5 text-xs" disabled={!me || me.getOut < 1} onClick={() => respond('jail', 'card')}>
@@ -467,6 +473,7 @@ export default function App() {
                   }}
                   title={muted ? 'Unmute SFX' : 'Mute SFX'}
                   aria-label={muted ? 'Unmute sound effects' : 'Mute sound effects'}
+                  aria-pressed={muted}
                 >
                   SFX
                 </button>
@@ -479,6 +486,7 @@ export default function App() {
                   }}
                   title={musicMuted ? 'Unmute music' : 'Mute music'}
                   aria-label={musicMuted ? 'Unmute music' : 'Mute music'}
+                  aria-pressed={musicMuted}
                 >
                   {musicMuted ? '♪' : '♫'}
                 </button>
@@ -502,8 +510,9 @@ export default function App() {
                     className="btn btn-dark min-h-[36px] px-2 py-1.5 text-[11px] sm:min-h-[40px] sm:px-3 sm:py-2"
                     onClick={solo.togglePause}
                     aria-label={g.paused ? 'Resume' : 'Pause'}
+                    aria-pressed={g.paused}
                   >
-                    II
+                    {g.paused ? 'Play' : 'Pause'}
                   </button>
                 )}
               </div>
@@ -772,43 +781,14 @@ export default function App() {
         />
       )}
       {mode === 'mp' && mp.pendingTrade && mp.pendingTrade.to === meId && (
-        <div
-          className="fadein fixed inset-0 z-[48] flex items-end justify-center bg-black/60 p-3 sm:items-center"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Trade offer"
-        >
-          <div className="panel sheet-panel w-full max-w-sm rounded-xl p-4 sm:rounded-xl">
-            <h3 className="deco text-center text-xl gold-text">Trade offer</h3>
-            <p className="mt-2 text-center text-[13px] text-[var(--mist)]">
-              {g.players[mp.pendingTrade.from]?.name} offers:
-            </p>
-            <div className="mt-3 space-y-2 rounded-lg bg-black/30 px-3 py-2.5 text-[12px]">
-              <div>
-                <div className="text-[10px] font-medium uppercase text-[var(--mist)]">You receive</div>
-                <div className="mt-0.5 font-semibold text-[var(--champagne)]">
-                  {(mp.pendingTrade.give || []).map((i) => SPACES[i]?.short).filter(Boolean).join(', ') || '—'}
-                  {mp.pendingTrade.cash > 0 ? ` + ${money(mp.pendingTrade.cash)}` : ''}
-                </div>
-              </div>
-              <div>
-                <div className="text-[10px] font-medium uppercase text-[var(--mist)]">You give</div>
-                <div className="mt-0.5 font-semibold text-[var(--ivory)]">
-                  {(mp.pendingTrade.get || []).map((i) => SPACES[i]?.short).filter(Boolean).join(', ') || '—'}
-                  {mp.pendingTrade.cash < 0 ? ` + ${money(-mp.pendingTrade.cash)}` : ''}
-                </div>
-              </div>
-            </div>
-            <div className="mt-4 flex gap-2">
-              <button type="button" className="btn btn-gold flex-1 py-3" onClick={() => mp.respondTrade(true)}>
-                Accept
-              </button>
-              <button type="button" className="btn btn-dark flex-1 py-3" onClick={() => mp.respondTrade(false)}>
-                Decline
-              </button>
-            </div>
-          </div>
-        </div>
+        <MpTradeRespondOverlay
+          fromName={g.players[mp.pendingTrade.from]?.name || 'Player'}
+          give={mp.pendingTrade.give || []}
+          get={mp.pendingTrade.get || []}
+          cash={mp.pendingTrade.cash || 0}
+          onAccept={() => mp.respondTrade(true)}
+          onDecline={() => mp.respondTrade(false)}
+        />
       )}
     </div>
   );

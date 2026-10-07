@@ -1,7 +1,7 @@
 import { CHANCE, CHEST, Card, GETOUT_CARD_INDEX, GROUP_MEMBERS, SPACES } from './data';
 import {
   heldGetOutExclude,
-  returnHeldGetOutsForPlayer,
+  settleGetOutOnBankrupt,
   shuffleIndices,
   takeHeldGetOut,
   type HeldGetOut,
@@ -36,6 +36,12 @@ import {
 } from './ai';
 import { canRespondToTrade, unmortgageCost } from './rules';
 import { makeRng } from './rng';
+import {
+  normalizeTradeCash,
+  transferTradeDeeds,
+  validateTradeAccept,
+  validateTradeOffer,
+} from './trade';
 export { makeRng };
 
 const MP_AI_DIFFICULTY: AiDifficulty = 'normal';
@@ -58,6 +64,8 @@ export interface MpRuntime {
   awaitingExtraRoll: boolean;
   /** Current winning auction bid */
   auctionBid: number;
+  /** Dice total stashed while a human card ack is pending (not lastGain). */
+  pendingCardDice: number;
   /** Get Out of Jail Free cards held out of their decks. */
   heldGetOut: HeldGetOut[];
   /** Pending human↔human trade offer */
@@ -100,14 +108,7 @@ function applyTradeDeal(
   const g = rt.game;
   const a = g.players[from];
   const b = g.players[to];
-  give.forEach((i) => {
-    if (g.props[i]?.owner === from) g.props[i].owner = to;
-  });
-  get.forEach((i) => {
-    if (g.props[i]?.owner === to) g.props[i].owner = from;
-  });
-  a.cash -= cash;
-  b.cash += cash;
+  transferTradeDeeds(g, from, to, give, get, cash);
   pushLog(
     rt,
     `Trade: ${a.name} ↔ ${b.name} (${give.map((i) => SPACES[i].short).join(', ') || '—'} / ${
@@ -126,9 +127,9 @@ function restoreRng(rt: MpRuntime): () => number {
   };
 }
 
-function pushLog(rt: MpRuntime, text: string, color?: string) {
+function pushLog(rt: MpRuntime, text: string, color?: string, kind?: import('./engine').LogKind) {
   const g = rt.game;
-  g.log = [{ id: rt.logId++, text, color }, ...g.log].slice(0, 40);
+  g.log = [{ id: rt.logId++, text, color, kind }, ...g.log].slice(0, 40);
 }
 
 function gain(rt: MpRuntime, p: Player, amt: number) {
@@ -170,18 +171,18 @@ function returnGetOutToDeck(rt: MpRuntime, deck: 'CHANCE' | 'CHEST') {
 function useGetOutCard(rt: MpRuntime, p: Player): boolean {
   if (p.getOut <= 0) return false;
   const deck = takeHeldGetOut(rt.heldGetOut, p.id);
+  if (!deck) return false;
   p.getOut--;
-  if (deck) returnGetOutToDeck(rt, deck);
+  returnGetOutToDeck(rt, deck);
   return true;
 }
 
 function bankrupt(rt: MpRuntime, p: Player, creditor: Player | null) {
   const g = rt.game;
   p.bankrupt = true;
-  for (const deck of returnHeldGetOutsForPlayer(rt.heldGetOut, p.id)) {
-    returnGetOutToDeck(rt, deck);
-    p.getOut = Math.max(0, p.getOut - 1);
-  }
+  const settled = settleGetOutOnBankrupt(rt.heldGetOut, p.id, creditor ? creditor.id : null);
+  if (creditor) creditor.getOut += settled.transferred;
+  for (const deck of settled.returnToDeck) returnGetOutToDeck(rt, deck);
   p.getOut = 0;
   const mine = playerProps(g, p.id);
   if (creditor) {
@@ -367,8 +368,7 @@ function drawCard(rt: MpRuntime, p: Player, deck: 'CHANCE' | 'CHEST', diceTotal:
   rt.game.card = { deck, text: card.text };
   rt.game.phase = 'card';
   pushLog(rt, `${p.name} draws ${deck === 'CHANCE' ? 'Chance' : 'Community Chest'}: ${card.text}`, '#8fd3f4');
-  // stash diceTotal on lastGain temporarily for ack apply
-  rt.game.lastGain = diceTotal;
+  rt.pendingCardDice = diceTotal > 0 ? diceTotal : 7;
 }
 
 function offerPurchase(rt: MpRuntime, p: Player, i: number) {
@@ -573,9 +573,10 @@ function resolveLanding(rt: MpRuntime, p: Player, diceTotal: number, mult = 1) {
 function applyPendingCard(rt: MpRuntime, p: Player) {
   const card = rt.pendingCard;
   const deck = rt.pendingCardDeck;
-  const diceTotal = rt.game.lastGain || 7;
+  const diceTotal = rt.pendingCardDice > 0 ? rt.pendingCardDice : 7;
   rt.pendingCard = null;
   rt.pendingCardDeck = null;
+  rt.pendingCardDice = 0;
   rt.game.card = null;
   if (!card) {
     afterLandingResolved(rt, p);
@@ -611,6 +612,7 @@ function advanceTurn(rt: MpRuntime) {
     if (g.turn === 0) g.round++;
   } while (g.players[g.turn].bankrupt && guard++ < 10);
   rt.awaitingExtraRoll = false;
+  rt.pendingTrade = null;
   g.doubles = 0;
   g.jailChoice = false;
   g.buySpace = null;
@@ -693,18 +695,16 @@ function afterLandingResolved(rt: MpRuntime, p: Player) {
     finishTurnAfterMove(rt, p);
     return;
   }
-  if (rt.awaitingExtraRoll || (rt.game.doubles > 0 && rt.game.doubles < 3 && rt.game.dice[0] === rt.game.dice[1])) {
-    // doubles: roll again
-    if (rt.game.dice[0] === rt.game.dice[1] && !p.inJail) {
-      pushLog(rt, `${p.name} rolls again (doubles).`, '#e9c46a');
-      rt.awaitingExtraRoll = false;
-      if (p.human) {
-        rt.game.phase = 'roll';
-        return;
-      }
-      performRoll(rt, p);
+  // Prefer awaitingExtraRoll — Chance utility re-rolls overwrite game.dice faces.
+  if (rt.awaitingExtraRoll && rt.game.doubles > 0 && rt.game.doubles < 3) {
+    pushLog(rt, `${p.name} rolls again (doubles).`, '#e9c46a');
+    rt.awaitingExtraRoll = false;
+    if (p.human) {
+      rt.game.phase = 'roll';
       return;
     }
+    performRoll(rt, p);
+    return;
   }
   finishTurnAfterMove(rt, p);
 }
@@ -797,6 +797,7 @@ export function createRuntime(
     pendingCardDeck: null,
     awaitingExtraRoll: false,
     auctionBid: 0,
+    pendingCardDice: 0,
     heldGetOut: [],
     pendingTrade: null,
   };
@@ -820,6 +821,7 @@ function assertHumanTurn(rt: MpRuntime, seat: number, allowPhases: string[]) {
 function ensureRuntime(rt: MpRuntime): void {
   if (!Array.isArray(rt.heldGetOut)) rt.heldGetOut = [];
   if (rt.pendingCardDeck === undefined) rt.pendingCardDeck = null;
+  if (typeof rt.pendingCardDice !== 'number') rt.pendingCardDice = 0;
 }
 
 export function applyAction(rt: MpRuntime, seat: number, action: MpAction): MpRuntime {
@@ -846,7 +848,9 @@ export function applyAction(rt: MpRuntime, seat: number, action: MpAction): MpRu
         g.phase = 'roll';
         break;
       }
-      if (ans === 'pay' && p.cash >= 50) {
+      if (ans === 'pay') {
+        if (p.cash < 50) raiseFunds(rt, p, 50);
+        if (p.cash < 50) throw new Error('Not enough cash for bail');
         charge(rt, p, 50, null, 'bail');
         p.inJail = false;
         g.phase = 'roll';
@@ -985,17 +989,10 @@ export function applyAction(rt: MpRuntime, seat: number, action: MpAction): MpRu
       const to = Number(payload.to);
       const give = (payload.give || []).map(Number);
       const get = (payload.get || []).map(Number);
-      const cash = Number(payload.cash) || 0;
+      const cash = normalizeTradeCash(payload.cash ?? 0);
+      const check = validateTradeOffer(g, seat, to, give, get, cash);
+      if (!check.ok) throw new Error(check.msg);
       const rival = g.players[to];
-      if (!rival || rival.bankrupt || to === seat) throw new Error('Bad trade target');
-      if (!give.length && !get.length) throw new Error('Offer something first');
-      if (cash > 0 && p.cash < cash) throw new Error("You don't have that cash");
-      if (cash < 0 && rival.cash < -cash) throw new Error('Rival cannot pay that');
-      if ([...give, ...get].some((i) => (g.props[i]?.houses || 0) > 0)) {
-        throw new Error('Sell buildings before trading that set');
-      }
-      if (give.some((i) => g.props[i]?.owner !== seat)) throw new Error('You do not own those deeds');
-      if (get.some((i) => g.props[i]?.owner !== to)) throw new Error('Rival does not own those deeds');
 
       if (!rival.human) {
         const accepted = aiAcceptsTrade(g, to, seat, give, get, cash, MP_AI_DIFFICULTY);
@@ -1021,13 +1018,11 @@ export function applyAction(rt: MpRuntime, seat: number, action: MpAction): MpRu
         rt.pendingTrade = null;
         break;
       }
-      const from = g.players[t.from];
-      if (!from || from.bankrupt) {
+      const check = validateTradeAccept(g, t);
+      if (!check.ok) {
         rt.pendingTrade = null;
-        throw new Error('Offer expired');
+        throw new Error(check.msg);
       }
-      if (t.cash > 0 && from.cash < t.cash) throw new Error('Offer no longer affordable');
-      if (t.cash < 0 && p.cash < -t.cash) throw new Error('You cannot pay that');
       applyTradeDeal(rt, t.from, t.to, t.give, t.get, t.cash);
       rt.pendingTrade = null;
       break;
