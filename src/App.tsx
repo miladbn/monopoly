@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Board from './components/Board';
 import FxLayer from './components/FxLayer';
-import { CenterPiece, DeedList, LogPanel, PlayerCard } from './components/Hud';
+import { CenterPiece, DeedList, LogPanel, PlayPanel, PlayerCard } from './components/Hud';
 import LobbyOverlay from './components/LobbyOverlay';
 import OnboardingOverlay from './components/OnboardingOverlay';
 import {
@@ -16,6 +16,7 @@ import {
   StartScreen,
 } from './components/Overlays';
 import ReactionBar from './components/ReactionBar';
+import Toast from './components/Toast';
 import TradeOverlay from './components/TradeOverlay';
 import {
   evaluateGameAchievements,
@@ -247,10 +248,18 @@ export default function App() {
     return () => sfx.stopMusic();
   }, [g.started]);
 
+  const uiModalOpen =
+    trade ||
+    inspect !== null ||
+    showOnboarding ||
+    !!(mode === 'mp' && mp.pendingTrade && mp.pendingTrade.to === meId);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const k = e.key.toLowerCase();
       if (!g.started) return;
+      // Don't steal keys while trade/inspect/onboarding is up (Escape handled by Modal).
+      if (uiModalOpen) return;
       if (k === ' ' || k === 'enter') {
         e.preventDefault();
         primary();
@@ -272,7 +281,7 @@ export default function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [g, primary, respond, solo, restart, mode]);
+  }, [g, primary, respond, solo, restart, mode, uiModalOpen]);
 
   const score = me ? netWorth(g, meId) : 0;
   const inLobby = wantMp && (!mp.room || mp.room.status === 'lobby');
@@ -454,6 +463,7 @@ export default function App() {
                     setMusicMuted(sfx.toggleMusic());
                   }}
                   title={musicMuted ? 'Unmute music' : 'Mute music'}
+                  aria-label={musicMuted ? 'Unmute music' : 'Mute music'}
                 >
                   {musicMuted ? '♪' : '♫'}
                 </button>
@@ -465,7 +475,9 @@ export default function App() {
                     settings.setColorblind(next);
                     setColorblind(next);
                   }}
-                  title="Colorblind ownership marks"
+                  title="Toggle high-contrast ownership marks"
+                  aria-label={colorblind ? 'Disable colorblind ownership marks' : 'Enable colorblind ownership marks'}
+                  aria-pressed={colorblind}
                 >
                   CB
                 </button>
@@ -474,7 +486,7 @@ export default function App() {
                     type="button"
                     className="btn btn-dark min-h-[36px] px-2 py-1.5 text-[11px] sm:min-h-[40px] sm:px-3 sm:py-2"
                     onClick={solo.togglePause}
-                    aria-label="Pause"
+                    aria-label={g.paused ? 'Resume' : 'Pause'}
                   >
                     II
                   </button>
@@ -491,7 +503,7 @@ export default function App() {
           </div>
 
           <aside className="panel hud-panel flex w-full shrink-0 flex-col gap-1 rounded-xl p-1.5 sm:gap-2 sm:p-2.5 landscape:h-auto landscape:w-[300px] lg:h-auto lg:w-[330px]">
-            <div className="grid shrink-0 grid-cols-2 gap-1 landscape:grid-cols-1 lg:grid-cols-1">
+            <div className="player-cards grid shrink-0 grid-cols-2 gap-1 landscape:grid-cols-1 lg:grid-cols-1">
               {g.players.map((p) => {
                 const mpPlayer = mp.room?.players.find((rp) => rp.seat === p.id);
                 return (
@@ -502,6 +514,7 @@ export default function App() {
                     active={g.turn === p.id}
                     disconnected={mode === 'mp' && p.human && mpPlayer?.connected === false}
                     title={mode === 'mp' ? titleLabel(mpPlayer?.title) : undefined}
+                    compact={g.players.length > 2}
                   />
                 );
               })}
@@ -573,13 +586,7 @@ export default function App() {
                   />
                 )
               ) : (
-                <p className="px-1 py-2 text-center text-[12px] text-[var(--mist)]">
-                  {watching
-                    ? 'Watching the table — send a reaction anytime.'
-                    : myTurn
-                      ? 'Your turn — use the button above.'
-                      : `${g.players[g.turn]?.name ?? 'Rival'} is playing.`}
-                </p>
+                <PlayPanel g={g} meId={meId} myTurn={myTurn} watching={watching} />
               )}
             </div>
 
@@ -591,6 +598,7 @@ export default function App() {
       </div>
 
       <FxLayer />
+      {g.started && g.phase !== 'menu' && <Toast log={g.log} />}
 
       {reportOpen && access.status === 'ok' && access.admin && (
         <BotReportOverlay
@@ -745,12 +753,33 @@ export default function App() {
         />
       )}
       {mode === 'mp' && mp.pendingTrade && mp.pendingTrade.to === meId && (
-        <div className="fadein fixed inset-0 z-[48] flex items-end justify-center bg-black/60 p-3 sm:items-center">
+        <div
+          className="fadein fixed inset-0 z-[48] flex items-end justify-center bg-black/60 p-3 sm:items-center"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Trade offer"
+        >
           <div className="panel sheet-panel w-full max-w-sm rounded-xl p-4 sm:rounded-xl">
             <h3 className="deco text-center text-xl gold-text">Trade offer</h3>
             <p className="mt-2 text-center text-[13px] text-[var(--mist)]">
-              {g.players[mp.pendingTrade.from]?.name} wants to trade with you.
+              {g.players[mp.pendingTrade.from]?.name} offers:
             </p>
+            <div className="mt-3 space-y-2 rounded-lg bg-black/30 px-3 py-2.5 text-[12px]">
+              <div>
+                <div className="text-[10px] font-medium uppercase text-[var(--mist)]">You receive</div>
+                <div className="mt-0.5 font-semibold text-[var(--champagne)]">
+                  {(mp.pendingTrade.give || []).map((i) => SPACES[i]?.short).filter(Boolean).join(', ') || '—'}
+                  {mp.pendingTrade.cash > 0 ? ` + ${money(mp.pendingTrade.cash)}` : ''}
+                </div>
+              </div>
+              <div>
+                <div className="text-[10px] font-medium uppercase text-[var(--mist)]">You give</div>
+                <div className="mt-0.5 font-semibold text-[var(--ivory)]">
+                  {(mp.pendingTrade.get || []).map((i) => SPACES[i]?.short).filter(Boolean).join(', ') || '—'}
+                  {mp.pendingTrade.cash < 0 ? ` + ${money(-mp.pendingTrade.cash)}` : ''}
+                </div>
+              </div>
+            </div>
             <div className="mt-4 flex gap-2">
               <button type="button" className="btn btn-gold flex-1 py-3" onClick={() => mp.respondTrade(true)}>
                 Accept

@@ -331,7 +331,7 @@ export function useMultiplayerGame(initialRoomId?: string) {
   const proposeTrade = useCallback(
     (rival: number, give: number[], get: number[], cash: number) => {
       void act('tradeOffer', { to: rival, give, get, cash });
-      return { ok: true as const, msg: 'Offer sent…' };
+      return { ok: true as const, msg: 'Offer sent — waiting for reply…' };
     },
     [act],
   );

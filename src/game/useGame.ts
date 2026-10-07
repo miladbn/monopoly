@@ -1060,6 +1060,7 @@ export function useGame() {
   const proposeTrade = useCallback(
     (rival: number, give: number[], get: number[], cash: number): { ok: boolean; msg: string } => {
       const g = G.current;
+      if (!canManageProperties(g, 0)) return { ok: false, msg: 'Wait for your manage phase.' };
       const me = g.players[0];
       const ai = g.players[rival];
       if (!give.length && !get.length) return { ok: false, msg: 'Offer something first.' };

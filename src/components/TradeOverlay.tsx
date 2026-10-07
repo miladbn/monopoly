@@ -55,7 +55,9 @@ export default function TradeOverlay({
       setGive([]);
       setGet([]);
       setCash(0);
-      setTimeout(onClose, 900);
+      // MP "Offer sent" waits for the other player — keep the desk open briefly then close.
+      const pending = /sent|waiting/i.test(r.msg);
+      window.setTimeout(onClose, pending ? 1400 : 900);
     }
   };
 
@@ -63,7 +65,7 @@ export default function TradeOverlay({
   const maxRecv = g.players[rival]?.cash ?? 0;
 
   return (
-    <Modal z={47} dim={0.75}>
+    <Modal z={47} dim={0.75} onClose={onClose} label="Trade desk">
       <div className="popin panel scroll flex max-h-full w-full max-w-md flex-col gap-3 overflow-y-auto rounded-xl p-4">
         <h2 className="deco text-center text-xl gold-text">Trade desk</h2>
 

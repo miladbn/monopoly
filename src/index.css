@@ -76,6 +76,12 @@ body {
   .action-dock .btn {
     font-size: 0.9rem;
   }
+
+  /* Inactive rivals collapse via PlayerCard compact; keep grid tight */
+  .player-cards {
+    max-height: 7.5rem;
+    overflow-y: auto;
+  }
 }
 
 @media (orientation: landscape) and (max-height: 500px) {

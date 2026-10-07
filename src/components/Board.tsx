@@ -58,10 +58,15 @@ const Tile = memo(function Tile({
   const pad =
     edge === 'bottom' ? 'pt-[24%]' : edge === 'left' ? 'pr-[26%]' : edge === 'top' ? 'pb-[24%]' : 'pl-[26%]';
 
+  const ownerLabel =
+    owner !== null ? `${sp.name}${ownerMark ? `, owned by ${ownerMark}` : ''}${mortgaged ? ', mortgaged' : ''}` : sp.name;
+
   return (
     <button
+      type="button"
       data-space={sp.i}
       onClick={() => onClick(sp.i)}
+      aria-label={ownerLabel}
       style={{
         gridRow: row,
         gridColumn: col,
@@ -110,19 +115,17 @@ const Tile = memo(function Tile({
           </>
         )}
       </div>
-      {owner !== null && ownerMark && (
+      {owner !== null && (
         <div
-          className={`pointer-events-none absolute bottom-[2px] right-[2px] flex h-[28%] min-h-[8px] min-w-[8px] items-center justify-center rounded-[2px] text-[clamp(5px,1.1vmin,10px)] font-extrabold leading-none ${
-            colorblind ? 'px-[2px]' : ''
-          }`}
+          className="pointer-events-none absolute bottom-[2px] right-[2px] flex h-[30%] min-h-[9px] min-w-[9px] items-center justify-center rounded-[2px] px-[2px] text-[clamp(5px,1.15vmin,10px)] font-extrabold leading-none"
           style={{
             background: ownerColor || '#c9a84c',
             color: '#111',
-            boxShadow: colorblind ? '0 0 0 1px #fff8' : undefined,
+            boxShadow: colorblind ? '0 0 0 1.5px #fff, 0 0 0 2.5px #1118' : '0 0 0 1px rgba(0,0,0,.35)',
           }}
           aria-hidden
         >
-          {colorblind ? ownerMark : ''}
+          {ownerMark || '•'}
         </div>
       )}
       {mortgaged && (

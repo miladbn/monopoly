@@ -1,5 +1,6 @@
 import { GROUP_COLORS, SPACES } from '../game/data';
 import { Game, canBuild, canMortgage, canSellHouse, money, netWorth, playerProps } from '../game/engine';
+import { unmortgageCost } from '../game/rules';
 
 const PIPS: Record<number, number[]> = {
   1: [4],
@@ -71,12 +72,15 @@ export function PlayerCard({
   active,
   disconnected,
   title,
+  compact,
 }: {
   g: Game;
   pid: number;
   active: boolean;
   disconnected?: boolean;
   title?: string | null;
+  /** Portrait: shrink inactive rivals to free HUD space */
+  compact?: boolean;
 }) {
   const p = g.players[pid];
   const props = playerProps(g, pid);
@@ -85,11 +89,12 @@ export function PlayerCard({
     const gr = SPACES[i].group!;
     groups[gr] = (groups[gr] || 0) + 1;
   });
+  const collapsed = compact && !active && !p.bankrupt;
   return (
     <div
-      className={`relative rounded-lg px-2 py-1.5 transition-all duration-200 ${p.bankrupt ? 'opacity-40 grayscale' : ''} ${
-        active ? 'turn-pulse' : ''
-      }`}
+      className={`relative rounded-lg px-2 transition-all duration-200 ${collapsed ? 'py-1' : 'py-1.5'} ${
+        p.bankrupt ? 'opacity-40 grayscale' : ''
+      } ${active ? 'turn-pulse' : ''}`}
       style={{
         background: active ? `linear-gradient(90deg, ${p.color}26, transparent)` : 'rgba(255,255,255,.03)',
         boxShadow: active ? `inset 0 0 0 1px ${p.color}aa` : 'inset 0 0 0 1px rgba(255,255,255,.06)',
@@ -97,40 +102,122 @@ export function PlayerCard({
     >
       <div className="flex items-center gap-2">
         <div
-          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-sm"
+          className={`flex shrink-0 items-center justify-center rounded-full ${collapsed ? 'h-6 w-6 text-xs' : 'h-7 w-7 text-sm'}`}
           style={{ background: `${p.color}33`, boxShadow: `0 0 0 1.5px ${p.color}` }}
         >
           {p.token}
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline justify-between gap-1">
-            <span className="truncate text-[12px] font-bold" style={{ color: p.color }}>
+            <span className={`truncate font-bold ${collapsed ? 'text-[11px]' : 'text-[12px]'}`} style={{ color: p.color }}>
               {p.name}
-              {title && <span className="ml-1 text-[9px] font-semibold text-[var(--champagne)]/75">{title}</span>}
+              {!collapsed && title && <span className="ml-1 text-[9px] font-semibold text-[var(--champagne)]/75">{title}</span>}
               {p.inJail && <span className="ml-1 text-[9px] font-semibold text-orange-300/90">jail</span>}
-              {p.getOut > 0 && <span className="ml-1 text-[9px] font-semibold text-[var(--brass)]">card×{p.getOut}</span>}
+              {!collapsed && p.getOut > 0 && (
+                <span className="ml-1 text-[9px] font-semibold text-[var(--brass)]">card×{p.getOut}</span>
+              )}
               {disconnected && <span className="ml-1 text-[9px] font-semibold text-[#e07a88]">away</span>}
               {p.bankrupt && <span className="ml-1 text-[9px] font-semibold text-[#e07a88]">out</span>}
             </span>
-            <span className="shrink-0 text-[12px] font-extrabold tabular-nums text-emerald-300/90">{money(p.cash)}</span>
+            <span className={`shrink-0 font-extrabold tabular-nums text-emerald-300/90 ${collapsed ? 'text-[11px]' : 'text-[12px]'}`}>
+              {money(p.cash)}
+            </span>
           </div>
-          <div className="flex items-center justify-between gap-1">
-            <div className="flex flex-wrap items-center gap-[2px]">
-              {Object.entries(groups).map(([gr, n]) => (
-                <span
-                  key={gr}
-                  className="rounded-[2px] px-1 text-[8px] font-bold text-black/80"
-                  style={{ background: GROUP_COLORS[gr] }}
-                >
-                  {n}
-                </span>
-              ))}
-              {!props.length && <span className="text-[9px] text-[var(--mist)]/70">no deeds</span>}
+          {!collapsed && (
+            <div className="flex items-center justify-between gap-1">
+              <div className="flex flex-wrap items-center gap-[2px]">
+                {Object.entries(groups).map(([gr, n]) => (
+                  <span
+                    key={gr}
+                    className="rounded-[2px] px-1 text-[8px] font-bold text-black/80"
+                    style={{ background: GROUP_COLORS[gr] }}
+                  >
+                    {n}
+                  </span>
+                ))}
+                {!props.length && <span className="text-[9px] text-[var(--mist)]/70">no deeds</span>}
+              </div>
+              <span className="text-[9px] tabular-nums text-[var(--mist)]">net {money(netWorth(g, pid))}</span>
             </div>
-            <span className="text-[9px] tabular-nums text-[var(--mist)]">net {money(netWorth(g, pid))}</span>
-          </div>
+          )}
         </div>
       </div>
+    </div>
+  );
+}
+
+export function PlayPanel({
+  g,
+  meId,
+  myTurn,
+  watching,
+}: {
+  g: Game;
+  meId: number;
+  myTurn: boolean;
+  watching?: boolean;
+}) {
+  const turn = g.players[g.turn];
+  const me = meId >= 0 ? g.players[meId] : null;
+  const deeds = meId >= 0 ? playerProps(g, meId).length : 0;
+  const hint =
+    watching
+      ? 'You’re watching this table.'
+      : g.phase === 'roll' && myTurn && g.jailChoice
+        ? 'Choose how to leave jail.'
+        : g.phase === 'roll' && myTurn
+          ? 'Roll when ready — Trade is available.'
+          : g.phase === 'manage' && myTurn
+            ? 'Build on monopolies, then End turn.'
+            : g.phase === 'buy'
+              ? 'Buy the deed or send it to auction.'
+              : g.phase === 'auction'
+                ? 'Bid or pass — highest bidder wins.'
+                : g.phase === 'card'
+                  ? 'Read the card, then Continue.'
+                  : g.phase === 'moving'
+                    ? 'Tokens are moving…'
+                    : `${turn?.name ?? 'Rival'} is taking their turn.`;
+
+  return (
+    <div className="space-y-2 px-0.5 py-1">
+      <div className="rounded-lg bg-black/30 px-2.5 py-2">
+        <div className="text-[10px] font-medium uppercase tracking-wide text-[var(--mist)]">
+          {myTurn ? 'Your turn' : 'Table'}
+        </div>
+        <div className="mt-0.5 text-[13px] font-semibold leading-snug text-[var(--champagne)]">{hint}</div>
+        {turn && (
+          <div className="mt-1.5 flex items-center gap-2 text-[11px] text-[var(--mist)]">
+            <span aria-hidden>{turn.token}</span>
+            <span style={{ color: turn.color }}>{turn.name}</span>
+            <span className="tabular-nums">
+              · dice {g.dice[0]}+{g.dice[1]}
+            </span>
+            <span>· round {g.round}</span>
+          </div>
+        )}
+      </div>
+      {me && (
+        <div className="grid grid-cols-3 gap-1.5 text-center">
+          <div className="rounded-md bg-black/25 px-1.5 py-1.5">
+            <div className="text-[9px] text-[var(--mist)]">Cash</div>
+            <div className="text-[12px] font-extrabold tabular-nums text-emerald-300/90">{money(me.cash)}</div>
+          </div>
+          <div className="rounded-md bg-black/25 px-1.5 py-1.5">
+            <div className="text-[9px] text-[var(--mist)]">Net</div>
+            <div className="text-[12px] font-extrabold tabular-nums text-[var(--champagne)]">{money(netWorth(g, meId))}</div>
+          </div>
+          <div className="rounded-md bg-black/25 px-1.5 py-1.5">
+            <div className="text-[9px] text-[var(--mist)]">Deeds</div>
+            <div className="text-[12px] font-extrabold tabular-nums text-[var(--ivory)]">{deeds}</div>
+          </div>
+        </div>
+      )}
+      {g.log[0] && (
+        <p className="line-clamp-2 text-[11px] leading-snug" style={{ color: g.log[0].color || 'var(--mist)' }}>
+          {g.log[0].text}
+        </p>
+      )}
     </div>
   );
 }
@@ -176,7 +263,7 @@ export function DeedList({
       {mine.map((i) => {
         const sp = SPACES[i];
         const st = g.props[i];
-        const unmCost = Math.round((sp.price! / 2) * 1.1);
+        const unmCost = unmortgageCost(sp.price!);
         return (
           <div key={i} className="flex items-center gap-1.5 rounded-md bg-black/20 px-1.5 py-1">
             <span className="h-5 w-1.5 shrink-0 rounded-sm" style={{ background: GROUP_COLORS[sp.group!] }} />
@@ -196,7 +283,7 @@ export function DeedList({
               <>
                 <button
                   type="button"
-                  className="btn btn-green h-7 w-7 text-[13px] leading-none disabled:opacity-25"
+                  className="btn btn-green h-9 w-9 min-h-[36px] min-w-[36px] text-[15px] leading-none disabled:opacity-25"
                   disabled={!canBuild(g, i)}
                   onClick={() => onBuild(i)}
                   title={`Build ($${sp.houseCost})`}
@@ -206,7 +293,7 @@ export function DeedList({
                 </button>
                 <button
                   type="button"
-                  className="btn btn-dark h-7 w-7 text-[13px] leading-none disabled:opacity-25"
+                  className="btn btn-dark h-9 w-9 min-h-[36px] min-w-[36px] text-[15px] leading-none disabled:opacity-25"
                   disabled={!canSellHouse(g, i)}
                   onClick={() => onSell(i)}
                   title="Sell building"
@@ -219,7 +306,7 @@ export function DeedList({
             {st.mortgaged ? (
               <button
                 type="button"
-                className="btn btn-gold h-7 px-1.5 text-[9px] disabled:opacity-25"
+                className="btn btn-gold h-9 min-h-[36px] px-2 text-[10px] disabled:opacity-25"
                 disabled={g.players[meId].cash < unmCost}
                 onClick={() => onUnmortgage(i)}
                 title={`Unmortgage $${unmCost}`}
@@ -229,7 +316,7 @@ export function DeedList({
             ) : (
               <button
                 type="button"
-                className="btn btn-dark h-7 px-1.5 text-[9px] disabled:opacity-25"
+                className="btn btn-dark h-9 min-h-[36px] px-2 text-[10px] disabled:opacity-25"
                 disabled={!canMortgage(g, i)}
                 onClick={() => onMortgage(i)}
                 title={`Mortgage $${sp.price! / 2}`}

@@ -8,7 +8,9 @@
     "build": "node scripts/bundle-server.mjs && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "smoke": "node scripts/smoke-game.mjs"
+    "smoke": "node scripts/smoke-game.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@upstash/redis": "^1.39.0",
@@ -27,6 +29,7 @@
     "@vitejs/plugin-react": "5.1.1",
     "tailwindcss": "4.1.17",
     "typescript": "5.9.3",
-    "vite": "7.3.2"
+    "vite": "7.3.2",
+    "vitest": "^3.2.7"
   }
 }

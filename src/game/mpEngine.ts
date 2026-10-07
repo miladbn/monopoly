@@ -26,6 +26,7 @@ import {
   rentFor,
 } from './engine';
 
+import { canRespondToTrade, unmortgageCost } from './rules';
 import { makeRng } from './rng';
 export { makeRng };
 
@@ -993,7 +994,7 @@ export function applyAction(rt: MpRuntime, seat: number, action: MpAction): MpRu
       assertHumanTurn(rt, seat, ['manage', 'roll']);
       const i = Number(action.payload);
       const st = g.props[i];
-      const cost = Math.round((SPACES[i].price! / 2) * 1.1);
+      const cost = unmortgageCost(SPACES[i].price!);
       if (!st?.mortgaged || st.owner !== seat || p.cash < cost) throw new Error('Cannot unmortgage');
       st.mortgaged = false;
       p.cash -= cost;
@@ -1048,6 +1049,7 @@ export function applyAction(rt: MpRuntime, seat: number, action: MpAction): MpRu
     case 'tradeRespond': {
       const payload = (action.payload || {}) as { accept: boolean };
       const t = rt.pendingTrade;
+      if (!canRespondToTrade(g, t, seat)) throw new Error('Cannot respond to trade now');
       if (!t || t.to !== seat) throw new Error('No trade for you');
       if (!payload.accept) {
         pushLog(rt, `${p.name} declines the trade.`, '#ff8f8f');
