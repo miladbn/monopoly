@@ -27,7 +27,9 @@ export interface TgWebApp {
     setText: (t: string) => void;
   };
   HapticFeedback?: {
-    impactOccurred: (style: 'light' | 'medium' | 'heavy') => void;
+    impactOccurred: (style: 'light' | 'medium' | 'heavy' | 'rigid' | 'soft') => void;
+    notificationOccurred?: (type: 'error' | 'success' | 'warning') => void;
+    selectionChanged?: () => void;
   };
   openTelegramLink?: (url: string) => void;
   openLink?: (url: string) => void;

@@ -7,19 +7,21 @@ export default function TradeOverlay({
   g,
   onClose,
   onOffer,
+  meId = 0,
 }: {
   g: Game;
   onClose: () => void;
   onOffer: (rival: number, give: number[], get: number[], cash: number) => { ok: boolean; msg: string };
+  meId?: number;
 }) {
-  const rivals = g.players.filter((p) => p.id !== 0 && !p.bankrupt);
-  const [rival, setRival] = useState(rivals[0]?.id ?? 1);
+  const rivals = g.players.filter((p) => p.id !== meId && !p.bankrupt);
+  const [rival, setRival] = useState(rivals[0]?.id ?? (meId === 0 ? 1 : 0));
   const [give, setGive] = useState<number[]>([]);
   const [get, setGet] = useState<number[]>([]);
   const [cash, setCash] = useState(0);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
-  const mine = playerProps(g, 0);
+  const mine = playerProps(g, meId);
   const theirs = playerProps(g, rival);
 
   const toggle = (list: number[], set: (v: number[]) => void, i: number) => {
@@ -57,7 +59,7 @@ export default function TradeOverlay({
     }
   };
 
-  const maxPay = g.players[0].cash;
+  const maxPay = g.players[meId]?.cash ?? 0;
   const maxRecv = g.players[rival]?.cash ?? 0;
 
   return (

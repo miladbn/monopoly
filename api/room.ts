@@ -85,19 +85,28 @@ function getInitData(req: VercelRequest, body: Record<string, unknown>): string 
 }
 
 function publicRoom(room: Record<string, unknown>, telegramId?: number) {
-  const players = (room.players as { telegramId: number; seat: number }[]) || [];
+  const players = (room.players as { telegramId: number; seat: number; lastSeenAt?: number }[]) || [];
   const mySeat = telegramId !== undefined ? players.find((p) => p.telegramId === telegramId)?.seat : undefined;
-  const runtime = room.runtime as { game?: unknown } | null;
+  const runtime = room.runtime as { game?: unknown; pendingTrade?: unknown } | null;
+  const now = Date.now();
+  const enrichedPlayers = players.map((p) => ({
+    ...p,
+    connected: !p.lastSeenAt ? true : now - p.lastSeenAt < 45000,
+  }));
   return {
     id: room.id,
     chatId: room.chatId,
     hostTelegramId: room.hostTelegramId,
-    players: room.players,
+    players: enrichedPlayers,
     status: room.status,
     maxPlayers: room.maxPlayers,
+    inviteOnly: room.inviteOnly ?? true,
+    joinLocked: !!room.joinLocked,
     version: room.version,
     createdAt: room.createdAt,
-    game: runtime?.game ?? null,
+    game: runtime?.game
+      ? { ...(runtime.game as object), pendingTrade: runtime.pendingTrade ?? null }
+      : null,
     seatMap: room.seatMap,
     mySeat,
   };
@@ -157,6 +166,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         pieceColor?: string;
         ready: boolean;
         seat: number;
+        lastSeenAt?: number;
       }[];
       const existing = players.find((p) => p.telegramId === user.id);
       if (existing) {
@@ -165,6 +175,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (pieceToken) existing.pieceToken = pieceToken;
         if (pieceColor) existing.pieceColor = pieceColor;
       } else {
+        if (room.joinLocked) return json(res, 400, { error: 'Host locked this lobby' });
         if (players.length >= Number(room.maxPlayers || 4)) return json(res, 400, { error: 'Room is full' });
         const seat = players.length;
         players.push({
@@ -175,6 +186,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           pieceColor,
           ready: false,
           seat,
+          lastSeenAt: Date.now(),
         });
         (room.seatMap as Record<number, number>)[seat] = user.id;
       }
@@ -203,11 +215,52 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const room = await loadRoom(roomId);
       if (!room) return json(res, 404, { error: 'Room not found' });
       if (room.status !== 'lobby') return json(res, 400, { error: 'Game already started' });
-      const p = (room.players as { telegramId: number; ready: boolean }[]).find((x) => x.telegramId === user.id);
+      const p = (room.players as { telegramId: number; ready: boolean; lastSeenAt?: number }[]).find(
+        (x) => x.telegramId === user.id,
+      );
       if (!p) return json(res, 400, { error: 'Not in room' });
       p.ready = body.ready !== false;
+      p.lastSeenAt = Date.now();
       await saveRoom(room);
       return json(res, 200, { room: publicRoom(room, user.id) });
+    }
+
+    if (action === 'heartbeat') {
+      try {
+        const { heartbeat } = await import('../server-bundle/rooms.js');
+        const room = await heartbeat(roomId, user.id);
+        return json(res, 200, { room: publicRoom(room as unknown as Record<string, unknown>, user.id) });
+      } catch {
+        const room = await loadRoom(roomId);
+        if (!room) return json(res, 404, { error: 'Room not found' });
+        const p = (room.players as { telegramId: number; lastSeenAt?: number }[]).find((x) => x.telegramId === user.id);
+        if (!p) return json(res, 400, { error: 'Not in room' });
+        p.lastSeenAt = Date.now();
+        await saveRoom(room);
+        return json(res, 200, { room: publicRoom(room, user.id) });
+      }
+    }
+
+    if (action === 'kick') {
+      const targetId = Number(body.targetId);
+      if (!targetId) return json(res, 400, { error: 'targetId required' });
+      try {
+        const { kickPlayer } = await import('../server-bundle/rooms.js');
+        const room = await kickPlayer(roomId, user.id, targetId);
+        return json(res, 200, { room: publicRoom(room as unknown as Record<string, unknown>, user.id) });
+      } catch (e) {
+        return json(res, 400, { error: e instanceof Error ? e.message : 'Kick failed' });
+      }
+    }
+
+    if (action === 'lock') {
+      try {
+        const { setJoinLocked } = await import('../server-bundle/rooms.js');
+        const room = await setJoinLocked(roomId, user.id, body.locked !== false);
+        return json(res, 200, { room: publicRoom(room as unknown as Record<string, unknown>, user.id) });
+      } catch (e) {
+        return json(res, 400, { error: e instanceof Error ? e.message : 'Lock failed' });
+      }
     }
 
     if (action === 'start') {

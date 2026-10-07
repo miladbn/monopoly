@@ -15,17 +15,8 @@ import {
   rentFor,
 } from './engine';
 
-/** Seeded PRNG (mulberry32). */
-export function makeRng(seed: number): () => number {
-  let a = seed >>> 0 || 1;
-  return () => {
-    a |= 0;
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
+import { makeRng } from './rng';
+export { makeRng };
 
 function shuffled(n: number, rng: () => number): number[] {
   const a = Array.from({ length: n }, (_, i) => i);
@@ -52,6 +43,14 @@ export interface MpRuntime {
   awaitingExtraRoll: boolean;
   /** Current winning auction bid */
   auctionBid: number;
+  /** Pending human↔human trade offer */
+  pendingTrade: {
+    from: number;
+    to: number;
+    give: number[];
+    get: number[];
+    cash: number;
+  } | null;
 }
 
 export type MpActionType =
@@ -64,11 +63,61 @@ export type MpActionType =
   | 'build'
   | 'sellHouse'
   | 'mortgage'
-  | 'unmortgage';
+  | 'unmortgage'
+  | 'tradeOffer'
+  | 'tradeRespond';
 
 export interface MpAction {
   type: MpActionType;
   payload?: unknown;
+}
+
+function stratWorth(props: Game['props'], pid: number): number {
+  let v = 0;
+  for (const key of Object.keys(props)) {
+    const i = +key;
+    const st = props[i];
+    if (st.owner !== pid) continue;
+    const sp = SPACES[i];
+    if (!sp.price) continue;
+    let m = 1;
+    if (sp.group) {
+      const owned = GROUP_MEMBERS[sp.group].filter((x) => props[x].owner === pid).length;
+      const total = GROUP_MEMBERS[sp.group].length;
+      m = owned === total ? 2.4 : owned === total - 1 ? 1.25 : 1;
+    }
+    v += (st.mortgaged ? sp.price / 2 : sp.price) * m;
+    v += st.houses * (sp.houseCost || 0);
+  }
+  return v;
+}
+
+function applyTradeDeal(
+  rt: MpRuntime,
+  from: number,
+  to: number,
+  give: number[],
+  get: number[],
+  cash: number,
+) {
+  const g = rt.game;
+  const a = g.players[from];
+  const b = g.players[to];
+  give.forEach((i) => {
+    if (g.props[i]?.owner === from) g.props[i].owner = to;
+  });
+  get.forEach((i) => {
+    if (g.props[i]?.owner === to) g.props[i].owner = from;
+  });
+  a.cash -= cash;
+  b.cash += cash;
+  pushLog(
+    rt,
+    `Trade: ${a.name} ↔ ${b.name} (${give.map((i) => SPACES[i].short).join(', ') || '—'} / ${
+      get.map((i) => SPACES[i].short).join(', ') || '—'
+    }${cash ? `, cash ${cash > 0 ? a.name : b.name} pays ${money(Math.abs(cash))}` : ''}).`,
+    '#e9c46a',
+  );
 }
 
 function restoreRng(rt: MpRuntime): () => number {
@@ -712,6 +761,7 @@ export function createRuntime(
     pendingCard: null,
     awaitingExtraRoll: false,
     auctionBid: 0,
+    pendingTrade: null,
   };
   beginTurn(rt);
   return rt;
@@ -878,6 +928,71 @@ export function applyAction(rt: MpRuntime, seat: number, action: MpAction): MpRu
       st.mortgaged = false;
       p.cash -= cost;
       pushLog(rt, `${p.name} lifts the mortgage on ${SPACES[i].short}.`, '#7ee787');
+      break;
+    }
+    case 'tradeOffer': {
+      assertHumanTurn(rt, seat, ['manage', 'roll']);
+      const payload = (action.payload || {}) as {
+        to: number;
+        give: number[];
+        get: number[];
+        cash: number;
+      };
+      const to = Number(payload.to);
+      const give = (payload.give || []).map(Number);
+      const get = (payload.get || []).map(Number);
+      const cash = Number(payload.cash) || 0;
+      const rival = g.players[to];
+      if (!rival || rival.bankrupt || to === seat) throw new Error('Bad trade target');
+      if (!give.length && !get.length) throw new Error('Offer something first');
+      if (cash > 0 && p.cash < cash) throw new Error("You don't have that cash");
+      if (cash < 0 && rival.cash < -cash) throw new Error('Rival cannot pay that');
+      if ([...give, ...get].some((i) => (g.props[i]?.houses || 0) > 0)) {
+        throw new Error('Sell buildings before trading that set');
+      }
+      if (give.some((i) => g.props[i]?.owner !== seat)) throw new Error('You do not own those deeds');
+      if (get.some((i) => g.props[i]?.owner !== to)) throw new Error('Rival does not own those deeds');
+
+      if (!rival.human) {
+        const before = stratWorth(g.props, to);
+        const hBefore = stratWorth(g.props, seat);
+        const sim: Game['props'] = {};
+        for (const k of Object.keys(g.props)) sim[+k] = { ...g.props[+k] };
+        give.forEach((i) => (sim[i].owner = to));
+        get.forEach((i) => (sim[i].owner = seat));
+        const aiDelta = stratWorth(sim, to) - before + cash;
+        const hDelta = stratWorth(sim, seat) - hBefore - cash;
+        const accepted = aiDelta > 20 && aiDelta >= hDelta * 0.75;
+        if (!accepted) {
+          pushLog(rt, `${rival.name} rejects the trade.`, '#ff8f8f');
+          break;
+        }
+        applyTradeDeal(rt, seat, to, give, get, cash);
+        break;
+      }
+
+      rt.pendingTrade = { from: seat, to, give, get, cash };
+      pushLog(rt, `${p.name} offers a trade to ${rival.name}.`, '#e9c46a');
+      break;
+    }
+    case 'tradeRespond': {
+      const payload = (action.payload || {}) as { accept: boolean };
+      const t = rt.pendingTrade;
+      if (!t || t.to !== seat) throw new Error('No trade for you');
+      if (!payload.accept) {
+        pushLog(rt, `${p.name} declines the trade.`, '#ff8f8f');
+        rt.pendingTrade = null;
+        break;
+      }
+      const from = g.players[t.from];
+      if (!from || from.bankrupt) {
+        rt.pendingTrade = null;
+        throw new Error('Offer expired');
+      }
+      if (t.cash > 0 && from.cash < t.cash) throw new Error('Offer no longer affordable');
+      if (t.cash < 0 && p.cash < -t.cash) throw new Error('You cannot pay that');
+      applyTradeDeal(rt, t.from, t.to, t.give, t.get, t.cash);
+      rt.pendingTrade = null;
       break;
     }
     default:

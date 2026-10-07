@@ -54,6 +54,7 @@ export async function createRoom(opts: {
     pieceColor: opts.pieceColor,
     ready: true,
     seat: 0,
+    lastSeenAt: Date.now(),
   };
   const room: Room = {
     id,
@@ -62,6 +63,8 @@ export async function createRoom(opts: {
     players: [host],
     status: 'lobby',
     maxPlayers: opts.maxPlayers ?? 4,
+    inviteOnly: true,
+    joinLocked: false,
     version: 0,
     createdAt: Date.now(),
     runtime: null,
@@ -85,9 +88,11 @@ export async function joinRoom(
     existing.avatar = player.avatar;
     if (player.pieceToken) existing.pieceToken = player.pieceToken;
     if (player.pieceColor) existing.pieceColor = player.pieceColor;
+    existing.lastSeenAt = Date.now();
     await save(room);
     return room;
   }
+  if (room.joinLocked) throw new Error('Host locked this lobby');
   if (room.players.length >= room.maxPlayers) throw new Error('Room is full');
   const seat = room.players.length;
   room.players.push({
@@ -98,8 +103,46 @@ export async function joinRoom(
     pieceColor: player.pieceColor,
     ready: false,
     seat,
+    lastSeenAt: Date.now(),
   });
   room.seatMap[seat] = player.telegramId;
+  await save(room);
+  return room;
+}
+
+export async function heartbeat(id: string, telegramId: number): Promise<Room> {
+  const room = await getRoom(id);
+  if (!room) throw new Error('Room not found');
+  const p = room.players.find((x) => x.telegramId === telegramId);
+  if (!p) throw new Error('Not in room');
+  p.lastSeenAt = Date.now();
+  await save(room);
+  return room;
+}
+
+export async function kickPlayer(id: string, hostId: number, targetId: number): Promise<Room> {
+  const room = await getRoom(id);
+  if (!room) throw new Error('Room not found');
+  if (room.status !== 'lobby') throw new Error('Can only kick in lobby');
+  if (room.hostTelegramId !== hostId) throw new Error('Only the host can kick');
+  if (targetId === hostId) throw new Error('Host cannot kick themselves');
+  room.players = room.players.filter((p) => p.telegramId !== targetId);
+  room.players.forEach((p, i) => {
+    p.seat = i;
+  });
+  room.seatMap = {};
+  room.players.forEach((p, i) => {
+    room.seatMap[i] = p.telegramId;
+  });
+  await save(room);
+  return room;
+}
+
+export async function setJoinLocked(id: string, hostId: number, locked: boolean): Promise<Room> {
+  const room = await getRoom(id);
+  if (!room) throw new Error('Room not found');
+  if (room.hostTelegramId !== hostId) throw new Error('Only the host can lock the lobby');
+  room.joinLocked = locked;
   await save(room);
   return room;
 }

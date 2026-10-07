@@ -10,6 +10,8 @@ export interface PublicPlayer {
   pieceColor?: string;
   ready: boolean;
   seat: number;
+  lastSeenAt?: number;
+  connected?: boolean;
 }
 
 export interface PlayerAppearance {
@@ -22,6 +24,14 @@ function appearanceBody(appearance?: PlayerAppearance) {
   return { pieceToken: appearance.token, pieceColor: appearance.color };
 }
 
+export interface PendingTrade {
+  from: number;
+  to: number;
+  give: number[];
+  get: number[];
+  cash: number;
+}
+
 export interface PublicRoom {
   id: string;
   chatId?: number;
@@ -29,9 +39,11 @@ export interface PublicRoom {
   players: PublicPlayer[];
   status: 'lobby' | 'playing' | 'ended';
   maxPlayers: number;
+  inviteOnly?: boolean;
+  joinLocked?: boolean;
   version: number;
   createdAt: number;
-  game: Game | null;
+  game: (Game & { pendingTrade?: PendingTrade | null }) | null;
   seatMap: Record<number, number>;
   mySeat?: number;
 }
@@ -116,6 +128,30 @@ export async function setReady(id: string, ready: boolean): Promise<PublicRoom> 
   const data = await request<{ room: PublicRoom }>('/api/room', {
     method: 'POST',
     body: JSON.stringify({ action: 'ready', roomId: id, ready, initData: getInitData() }),
+  });
+  return data.room;
+}
+
+export async function sendHeartbeat(id: string): Promise<PublicRoom> {
+  const data = await request<{ room: PublicRoom }>('/api/room', {
+    method: 'POST',
+    body: JSON.stringify({ action: 'heartbeat', roomId: id, initData: getInitData() }),
+  });
+  return data.room;
+}
+
+export async function kickPlayer(id: string, targetId: number): Promise<PublicRoom> {
+  const data = await request<{ room: PublicRoom }>('/api/room', {
+    method: 'POST',
+    body: JSON.stringify({ action: 'kick', roomId: id, targetId, initData: getInitData() }),
+  });
+  return data.room;
+}
+
+export async function setLobbyLock(id: string, locked: boolean): Promise<PublicRoom> {
+  const data = await request<{ room: PublicRoom }>('/api/room', {
+    method: 'POST',
+    body: JSON.stringify({ action: 'lock', roomId: id, locked, initData: getInitData() }),
   });
   return data.room;
 }

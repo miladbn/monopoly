@@ -56,6 +56,9 @@ export function botReport(): Promise<{
   'server-bundle/rooms.d.ts': `export function startRoom(roomId: string, telegramId: number, fillAi?: boolean): Promise<unknown>;
 export function applyRoomAction(roomId: string, telegramId: number, action: { type: string; payload?: unknown }): Promise<unknown>;
 export function setPlayerAppearance(roomId: string, telegramId: number, appearance: { pieceToken: string; pieceColor: string }): Promise<unknown>;
+export function heartbeat(roomId: string, telegramId: number): Promise<unknown>;
+export function kickPlayer(roomId: string, hostId: number, targetId: number): Promise<unknown>;
+export function setJoinLocked(roomId: string, hostId: number, locked: boolean): Promise<unknown>;
 `,
   'server-bundle/bot.d.ts': `export function handleTelegramWebhook(update: unknown): Promise<void>;
 `,

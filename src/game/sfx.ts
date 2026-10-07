@@ -1,6 +1,13 @@
+import { settings } from './settings';
+
 let ctx: AudioContext | null = null;
 let master: GainNode | null = null;
-let muted = localStorage.getItem('deco-city-muted') === '1';
+let musicGain: GainNode | null = null;
+let sfxGain: GainNode | null = null;
+let muted = settings.sfxMuted();
+let musicMuted = settings.musicMuted();
+let musicTimer: number | null = null;
+let musicStep = 0;
 
 function ac(): AudioContext | null {
   if (typeof window === 'undefined') return null;
@@ -9,16 +16,30 @@ function ac(): AudioContext | null {
     if (!C) return null;
     ctx = new C();
     master = ctx.createGain();
-    master.gain.value = muted ? 0 : 0.5;
+    master.gain.value = 1;
     master.connect(ctx.destination);
+    sfxGain = ctx.createGain();
+    sfxGain.gain.value = muted ? 0 : 0.5;
+    sfxGain.connect(master);
+    musicGain = ctx.createGain();
+    musicGain.gain.value = musicMuted ? 0 : 0.12;
+    musicGain.connect(master);
   }
   if (ctx.state === 'suspended') void ctx.resume();
   return ctx;
 }
 
-function tone(freq: number, dur: number, type: OscillatorType = 'sine', vol = 0.3, delay = 0, slideTo?: number) {
+function tone(
+  freq: number,
+  dur: number,
+  type: OscillatorType = 'sine',
+  vol = 0.3,
+  delay = 0,
+  slideTo?: number,
+  dest: GainNode | null = sfxGain,
+) {
   const c = ac();
-  if (!c || !master) return;
+  if (!c || !dest) return;
   const t0 = c.currentTime + delay;
   const o = c.createOscillator();
   const gn = c.createGain();
@@ -28,14 +49,14 @@ function tone(freq: number, dur: number, type: OscillatorType = 'sine', vol = 0.
   gn.gain.setValueAtTime(0.0001, t0);
   gn.gain.exponentialRampToValueAtTime(vol, t0 + 0.012);
   gn.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-  o.connect(gn).connect(master);
+  o.connect(gn).connect(dest);
   o.start(t0);
   o.stop(t0 + dur + 0.05);
 }
 
 function noise(dur = 0.08, vol = 0.25, delay = 0) {
   const c = ac();
-  if (!c || !master) return;
+  if (!c || !sfxGain) return;
   const len = Math.floor(c.sampleRate * dur);
   const buf = c.createBuffer(1, len, c.sampleRate);
   const d = buf.getChannelData(0);
@@ -47,22 +68,55 @@ function noise(dur = 0.08, vol = 0.25, delay = 0) {
   const f = c.createBiquadFilter();
   f.type = 'bandpass';
   f.frequency.value = 1800;
-  src.connect(f).connect(gn).connect(master);
+  src.connect(f).connect(gn).connect(sfxGain);
   src.start(c.currentTime + delay);
+}
+
+const MUSIC_NOTES = [196, 233, 262, 311, 349, 311, 262, 233];
+
+function tickMusic() {
+  if (musicMuted || !musicGain) return;
+  const n = MUSIC_NOTES[musicStep % MUSIC_NOTES.length];
+  musicStep++;
+  tone(n, 0.35, 'triangle', 0.35, 0, undefined, musicGain);
+  tone(n * 1.5, 0.28, 'sine', 0.12, 0.05, undefined, musicGain);
 }
 
 export const sfx = {
   get muted() {
     return muted;
   },
+  get musicMuted() {
+    return musicMuted;
+  },
   toggle() {
     muted = !muted;
-    localStorage.setItem('deco-city-muted', muted ? '1' : '0');
-    if (master) master.gain.value = muted ? 0 : 0.5;
+    settings.setSfxMuted(muted);
+    if (sfxGain) sfxGain.gain.value = muted ? 0 : 0.5;
     return muted;
+  },
+  toggleMusic() {
+    musicMuted = !musicMuted;
+    settings.setMusicMuted(musicMuted);
+    if (musicGain) musicGain.gain.value = musicMuted ? 0 : 0.12;
+    if (!musicMuted) this.startMusic();
+    else this.stopMusic();
+    return musicMuted;
   },
   unlock() {
     ac();
+  },
+  startMusic() {
+    ac();
+    if (musicTimer != null || musicMuted) return;
+    tickMusic();
+    musicTimer = window.setInterval(tickMusic, 900);
+  },
+  stopMusic() {
+    if (musicTimer != null) {
+      clearInterval(musicTimer);
+      musicTimer = null;
+    }
   },
   click: () => noise(0.05, 0.18),
   step: () => tone(620, 0.05, 'triangle', 0.08),

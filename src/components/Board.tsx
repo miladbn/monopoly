@@ -22,14 +22,27 @@ interface TileProps {
   sp: Space;
   owner: number | null;
   ownerColor?: string;
+  ownerMark?: string;
   houses: number;
   mortgaged: boolean;
   highlight: boolean;
+  colorblind?: boolean;
   onClick: (i: number) => void;
   small: boolean;
 }
 
-const Tile = memo(function Tile({ sp, owner, ownerColor, houses, mortgaged, highlight, onClick, small }: TileProps) {
+const Tile = memo(function Tile({
+  sp,
+  owner,
+  ownerColor,
+  ownerMark,
+  houses,
+  mortgaged,
+  highlight,
+  colorblind,
+  onClick,
+  small,
+}: TileProps) {
   const { row, col } = gridPos(sp.i);
   const edge = edgeOf(sp.i);
   const corner = edge === 'corner';
@@ -97,6 +110,21 @@ const Tile = memo(function Tile({ sp, owner, ownerColor, houses, mortgaged, high
           </>
         )}
       </div>
+      {owner !== null && ownerMark && (
+        <div
+          className={`pointer-events-none absolute bottom-[2px] right-[2px] flex h-[28%] min-h-[8px] min-w-[8px] items-center justify-center rounded-[2px] text-[clamp(5px,1.1vmin,10px)] font-extrabold leading-none ${
+            colorblind ? 'px-[2px]' : ''
+          }`}
+          style={{
+            background: ownerColor || '#c9a84c',
+            color: '#111',
+            boxShadow: colorblind ? '0 0 0 1px #fff8' : undefined,
+          }}
+          aria-hidden
+        >
+          {colorblind ? ownerMark : ''}
+        </div>
+      )}
       {mortgaged && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/55">
           <span className="deco text-[clamp(6px,1.3vmin,13px)] font-bold text-rose-300">MTG</span>
@@ -110,11 +138,13 @@ export default function Board({
   g,
   onTile,
   onCenter,
+  colorblind,
   children,
 }: {
   g: Game;
   onTile: (i: number) => void;
   onCenter?: () => void;
+  colorblind?: boolean;
   children?: React.ReactNode;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -151,15 +181,18 @@ export default function Board({
         {SPACES.map((sp) => {
           const st = g.props[sp.i];
           const ownerId = st ? st.owner : null;
+          const owner = ownerId !== null ? g.players[ownerId] : null;
           return (
             <Tile
               key={sp.i}
               sp={sp}
               owner={ownerId}
-              ownerColor={ownerId !== null ? g.players[ownerId].color : undefined}
+              ownerColor={owner?.color}
+              ownerMark={owner ? (owner.name.trim()[0] || owner.token).toUpperCase() : undefined}
               houses={st ? st.houses : 0}
               mortgaged={!!st && st.mortgaged}
               highlight={!!current && current.pos === sp.i}
+              colorblind={colorblind}
               onClick={onTile}
               small={w < 380}
             />

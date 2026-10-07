@@ -16,7 +16,9 @@ import {
   rentFor,
 } from './engine';
 import { elCenter, fx } from './fx';
+import { makeRng } from './rng';
 import type { PlayerAppearance } from './playerProfile';
+import { dailySeed, saveDailyScore, todayKey } from './settings';
 import { sfx } from './sfx';
 
 class Abort extends Error {}
@@ -79,6 +81,10 @@ export function useGame() {
   const pending = useRef<{ type: string; resolve: (v: unknown) => void; reject: (e: unknown) => void } | null>(null);
   const chanceDeck = useRef<number[]>(shuffled(16));
   const chestDeck = useRef<number[]>(shuffled(16));
+  const rng = useRef<() => number>(() => Math.random());
+  const dailyMode = useRef(false);
+  const lastBuy = useRef<{ space: number; price: number; at: number } | null>(null);
+  const [undoUntil, setUndoUntil] = useState(0);
   const [scores, setScores] = useState<HighScore[]>(() => loadScores());
   const [lastScore, setLastScore] = useState<HighScore | null>(null);
 
@@ -484,6 +490,16 @@ export function useGame() {
     fx.ring(c.x, c.y, p.color);
     fx.text(c.x, c.y - 26, 'BOUGHT!', p.color, 22);
     fx.shake(6);
+    if (p.human) {
+      lastBuy.current = { space: i, price: sp.price!, at: Date.now() };
+      setUndoUntil(Date.now() + 4000);
+      window.setTimeout(() => {
+        if (lastBuy.current?.space === i) {
+          lastBuy.current = null;
+          setUndoUntil(0);
+        }
+      }, 4000);
+    }
     if (sp.group && hasMonopoly(g, sp.group, p.id)) {
       log(`🎉 ${p.name} completes the ${sp.group.toUpperCase()} monopoly!`, '#e9c46a');
       fx.flash('233,196,106', 0.25);
@@ -495,6 +511,23 @@ export function useGame() {
     }
     sync();
   }
+
+  const undoBuy = useCallback(() => {
+    const buy = lastBuy.current;
+    if (!buy || Date.now() - buy.at > 4000) return false;
+    const g = G.current;
+    const me = g.players[0];
+    const st = g.props[buy.space];
+    if (!st || st.owner !== 0 || st.houses > 0) return false;
+    st.owner = null;
+    me.cash += buy.price;
+    lastBuy.current = null;
+    setUndoUntil(0);
+    log(`Undid purchase of ${SPACES[buy.space].short}.`, '#ffd166');
+    sfx.click();
+    sync();
+    return true;
+  }, [log, sync]);
 
   function aiValue(p: Player, i: number): number {
     const g = S();
@@ -522,7 +555,7 @@ export function useGame() {
   async function runAuction(i: number) {
     const g = S();
     const active = g.players.map((p) => !p.bankrupt);
-    const caps = g.players.map((p) => (p.human ? 0 : Math.min(p.cash, Math.round(aiValue(p, i) * (0.55 + Math.random() * 0.4)))));
+    const caps = g.players.map((p) => (p.human ? 0 : Math.min(p.cash, Math.round(aiValue(p, i) * (0.55 + rng.current() * 0.4)))));
     let bid = 0;
     let high: number | null = null;
     let cur = 0;
@@ -655,11 +688,11 @@ export function useGame() {
     sync();
     sfx.dice();
     for (let k = 0; k < 9; k++) {
-      g.dice = [1 + ((Math.random() * 6) | 0), 1 + ((Math.random() * 6) | 0)];
+      g.dice = [1 + ((rng.current() * 6) | 0), 1 + ((rng.current() * 6) | 0)];
       sync();
       await sleep(55);
     }
-    const d: [number, number] = [1 + ((Math.random() * 6) | 0), 1 + ((Math.random() * 6) | 0)];
+    const d: [number, number] = [1 + ((rng.current() * 6) | 0), 1 + ((rng.current() * 6) | 0)];
     g.dice = d;
     g.rolling = false;
     sync();
@@ -762,10 +795,19 @@ export function useGame() {
     const hs = computeScore(won);
     setLastScore(hs);
     setScores(saveScore(hs));
+    if (dailyMode.current) {
+      saveDailyScore({
+        day: todayKey(),
+        name: hs.name,
+        score: hs.score,
+        won: hs.won,
+        date: hs.date,
+      });
+    }
     if (won) {
       sfx.win();
       for (let k = 0; k < 7; k++)
-        fx.confetti(window.innerWidth * (0.15 + Math.random() * 0.7), window.innerHeight * (0.2 + Math.random() * 0.3));
+        fx.confetti(window.innerWidth * (0.15 + rng.current() * 0.7), window.innerHeight * (0.2 + rng.current() * 0.3));
       fx.flash('233,196,106', 0.35);
     } else {
       fx.flash('255,70,70', 0.3);
@@ -815,13 +857,28 @@ export function useGame() {
   }
 
   /* ---------------- public actions ---------------- */
-  const start = useCallback((name: string, opponents: number, look?: PlayerAppearance) => {
+  const start = useCallback((name: string, opponents: number, look?: PlayerAppearance, opts?: { daily?: boolean }) => {
     gen.current++;
     if (pending.current) pending.current.reject(new Abort());
-    chanceDeck.current = shuffled(16);
-    chestDeck.current = shuffled(16);
+    dailyMode.current = !!opts?.daily;
+    rng.current = opts?.daily ? makeRng(dailySeed()) : () => Math.random();
+    const shuffleWith = (n: number) => {
+      const a = Array.from({ length: n }, (_, i) => i);
+      for (let i = a.length - 1; i > 0; i--) {
+        const j = (rng.current() * (i + 1)) | 0;
+        [a[i], a[j]] = [a[j], a[i]];
+      }
+      return a;
+    };
+    chanceDeck.current = shuffleWith(16);
+    chestDeck.current = shuffleWith(16);
     logId.current = 2;
+    lastBuy.current = null;
+    setUndoUntil(0);
     G.current = newGame(name, opponents, look);
+    if (opts?.daily) {
+      G.current.log = [{ id: 1, text: `Daily challenge ${todayKey()} — same seed for everyone today.`, color: '#e9c46a' }];
+    }
     paused.current = false;
     setLastScore(null);
     sync();
@@ -1004,5 +1061,8 @@ export function useGame() {
     scores,
     lastScore,
     paused: paused.current,
+    undoBuy,
+    canUndoBuy: undoUntil > Date.now() && !!lastBuy.current,
+    isDaily: dailyMode.current,
   };
 }

@@ -22,6 +22,8 @@ export default function LobbyOverlay({
   onCreate,
   onJoin,
   onAppearance,
+  onKick,
+  onLock,
 }: {
   room: PublicRoom | null;
   busy: boolean;
@@ -34,18 +36,21 @@ export default function LobbyOverlay({
   onCreate: () => void;
   onJoin: (code: string) => void;
   onAppearance?: (appearance: PlayerAppearance) => void;
+  onKick?: (telegramId: number) => void;
+  onLock?: (locked: boolean) => void;
 }) {
   const [code, setCode] = useState('');
   const [copied, setCopied] = useState<'code' | 'link' | null>(null);
   const [appearance, setAppearance] = useState(loadPlayerProfile);
+  const myTg = getWebApp()?.initDataUnsafe?.user?.id;
 
   useEffect(() => {
     if (!room) return;
-    const me = room.players.find((p) => p.telegramId === getWebApp()?.initDataUnsafe?.user?.id);
+    const me = room.players.find((p) => p.telegramId === myTg);
     if (me?.pieceToken && me?.pieceColor) {
       setAppearance({ token: me.pieceToken, color: me.pieceColor });
     }
-  }, [room?.id, room?.version]);
+  }, [room?.id, room?.version, myTg]);
 
   const setLook = (next: PlayerAppearance) => {
     setAppearance(next);
@@ -60,7 +65,9 @@ export default function LobbyOverlay({
           <div className="sunburst" aria-hidden />
           <div className="relative text-center">
             <h1 className="deco brand-in text-3xl font-bold gold-text">Lobby</h1>
-            <p className="mt-2 text-[13px] text-[var(--mist)]">Pick your look, then create or join a room.</p>
+            <p className="mt-2 text-[13px] text-[var(--mist)]">
+              Invite-only rooms — share a code or link. Pick your look first.
+            </p>
           </div>
           {error && (
             <div className="relative mt-4 rounded-lg bg-[var(--wine)]/25 px-3 py-2 text-[12px] text-[#f0b4bb]">{error}</div>
@@ -120,13 +127,24 @@ export default function LobbyOverlay({
     setTimeout(() => setCopied(null), 1500);
   };
 
+  const waitingOn = room.players.filter((p) => !p.ready).map((p) => p.name);
+  const allReady = room.players.every((p) => p.ready);
+
   return (
     <Modal dim={0.9}>
       <div className="popin panel scroll max-h-[92dvh] w-full max-w-md overflow-y-auto rounded-xl p-4 sm:p-6">
         <div className="text-center">
           <h1 className="deco text-3xl font-bold gold-text">Room {room.id}</h1>
           <p className="mt-2 text-[13px] text-[var(--mist)]">
-            {room.players.length}/{room.maxPlayers} players · empty seats fill with AI
+            {room.players.length}/{room.maxPlayers} · invite only
+            {room.joinLocked ? ' · locked' : ''} · empty seats fill with AI
+          </p>
+          <p className="mt-1 text-[12px] text-[var(--champagne)]/80">
+            {allReady
+              ? isHost
+                ? 'Everyone is ready — start when you want.'
+                : 'Waiting for the host to start…'
+              : `Waiting on ${waitingOn.join(', ') || 'players'}…`}
           </p>
         </div>
 
@@ -152,10 +170,22 @@ export default function LobbyOverlay({
                 {p.telegramId === room.hostTelegramId ? (
                   <span className="ml-1.5 text-[11px] font-medium text-[var(--brass)]">host</span>
                 ) : null}
+                {p.connected === false ? (
+                  <span className="ml-1.5 text-[11px] font-medium text-[#e07a88]">away</span>
+                ) : null}
               </span>
               <span className={`text-[12px] font-semibold ${p.ready ? 'text-emerald-300/90' : 'text-[var(--mist)]'}`}>
                 {p.ready ? 'Ready' : 'Waiting'}
               </span>
+              {isHost && p.telegramId !== room.hostTelegramId && onKick && (
+                <button
+                  type="button"
+                  className="btn btn-dark px-2 py-1 text-[10px]"
+                  onClick={() => onKick(p.telegramId)}
+                >
+                  Kick
+                </button>
+              )}
             </div>
           ))}
         </div>
@@ -172,6 +202,17 @@ export default function LobbyOverlay({
             {copied === 'link' ? 'Copied' : 'Copy link'}
           </button>
         </div>
+
+        {isHost && onLock && (
+          <button
+            type="button"
+            onClick={() => onLock(!room.joinLocked)}
+            className="btn btn-dark mt-2 w-full py-2.5 text-sm"
+          >
+            {room.joinLocked ? 'Unlock joins' : 'Lock lobby (no new joins)'}
+          </button>
+        )}
+
         <button
           type="button"
           onClick={() => onReady(!meReady)}

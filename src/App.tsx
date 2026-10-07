@@ -3,6 +3,7 @@ import Board from './components/Board';
 import FxLayer from './components/FxLayer';
 import { CenterPiece, DeedList, LogPanel, PlayerCard } from './components/Hud';
 import LobbyOverlay from './components/LobbyOverlay';
+import OnboardingOverlay from './components/OnboardingOverlay';
 import {
   AuctionOverlay,
   BuyOverlay,
@@ -19,10 +20,13 @@ import { SPACES } from './game/data';
 import { money, netWorth } from './game/engine';
 import { fx } from './game/fx';
 import { loadPlayerProfile, type PlayerAppearance } from './game/playerProfile';
+import { settings, todayDailyBest, type HudTab } from './game/settings';
+import { renderShareCard, shareOrDownloadCard } from './game/shareCard';
 import { sfx } from './game/sfx';
 import { useGame } from './game/useGame';
 import { useMultiplayerGame } from './game/useMultiplayerGame';
 import { fetchAccess, fetchReport, type BotReport, type ChannelLink } from './telegram/api';
+import { hapticImpact, hapticNotify } from './telegram/haptics';
 import { bootstrapTelegram, getWebApp, isTelegram, openExternal, telegramDisplayName } from './telegram/webapp';
 
 type PlayMode = 'menu' | 'solo' | 'mp';
@@ -38,9 +42,12 @@ export default function App() {
   const boot = useRef(bootstrapTelegram());
   const inTelegram = isTelegram();
   const [access, setAccess] = useState<AccessState>(inTelegram ? { status: 'loading' } : { status: 'skip' });
-  const [mode, setMode] = useState<PlayMode>(() => (boot.current.roomFromStart || inTelegram ? 'mp' : 'menu'));
-  const [mpRoomHint] = useState(boot.current.roomFromStart);
-  const [wantMp, setWantMp] = useState((!!boot.current.roomFromStart || inTelegram) && !inTelegram);
+  const reconnectId = settings.getReconnectRoom();
+  const [mode, setMode] = useState<PlayMode>(() =>
+    boot.current.roomFromStart || reconnectId || inTelegram ? 'mp' : 'menu',
+  );
+  const [mpRoomHint] = useState(boot.current.roomFromStart || reconnectId || undefined);
+  const [wantMp, setWantMp] = useState(!!boot.current.roomFromStart || !!reconnectId);
 
   const solo = useGame();
   const mp = useMultiplayerGame(wantMp ? mpRoomHint : undefined);
@@ -53,10 +60,13 @@ export default function App() {
   const shakeRef = useRef<HTMLDivElement>(null);
   const boxRef = useRef<HTMLDivElement>(null);
   const [boardSize, setBoardSize] = useState(420);
-  const [tab, setTab] = useState<'log' | 'deeds'>('log');
+  const [hudTab, setHudTab] = useState<HudTab>('play');
   const [inspect, setInspect] = useState<number | null>(null);
   const [trade, setTrade] = useState(false);
-  const cfg = useRef<{ name: string; opp: number; look: PlayerAppearance }>({
+  const [showOnboarding, setShowOnboarding] = useState(() => !settings.onboarded());
+  const [colorblind, setColorblind] = useState(() => settings.colorblind());
+  const [musicMuted, setMusicMuted] = useState(sfx.musicMuted);
+  const cfg = useRef<{ name: string; opp: number; look: PlayerAppearance; daily?: boolean }>({
     name: telegramDisplayName(),
     opp: 3,
     look: loadPlayerProfile(),
@@ -175,8 +185,13 @@ export default function App() {
 
   const restart = useCallback(() => {
     if (mode === 'mp') return;
-    solo.start(cfg.current.name, cfg.current.opp, cfg.current.look);
+    solo.start(cfg.current.name, cfg.current.opp, cfg.current.look, { daily: cfg.current.daily });
   }, [mode, solo]);
+
+  useEffect(() => {
+    if (g.started && !sfx.musicMuted) sfx.startMusic();
+    return () => sfx.stopMusic();
+  }, [g.started]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -209,6 +224,10 @@ export default function App() {
   const inLobby = wantMp && (!mp.room || mp.room.status === 'lobby');
   const showStart = mode === 'menu' && !wantMp && !g.started;
 
+  useEffect(() => {
+    if (myTurn) hapticImpact('medium');
+  }, [myTurn, g.turn, g.phase]);
+
   const actionBar = () => {
     if (g.phase === 'roll' && myTurn && g.jailChoice) {
       return (
@@ -228,14 +247,19 @@ export default function App() {
     if (g.phase === 'roll' && myTurn) {
       return (
         <div className="flex gap-2">
-          <button type="button" className="btn btn-gold pulse-glow min-h-[48px] flex-1 py-2.5 text-base sm:min-h-[52px] sm:py-4 sm:text-lg" onClick={() => respond('roll', true)}>
+          <button
+            type="button"
+            className="btn btn-gold pulse-glow min-h-[48px] flex-1 py-2.5 text-base sm:min-h-[52px] sm:py-4 sm:text-lg"
+            onClick={() => {
+              hapticImpact('heavy');
+              respond('roll', true);
+            }}
+          >
             Roll dice
           </button>
-          {mode !== 'mp' && (
-            <button type="button" className="btn btn-dark min-h-[48px] px-3 py-2.5 text-xs sm:min-h-[52px] sm:py-4" onClick={() => setTrade(true)} aria-label="Trade">
-              Trade
-            </button>
-          )}
+          <button type="button" className="btn btn-dark min-h-[48px] px-3 py-2.5 text-xs sm:min-h-[52px] sm:py-4" onClick={() => setTrade(true)} aria-label="Trade">
+            Trade
+          </button>
         </div>
       );
     }
@@ -245,14 +269,12 @@ export default function App() {
           <button type="button" className="btn btn-gold min-h-[48px] flex-1 py-2.5 text-base sm:min-h-[52px] sm:py-4" onClick={() => respond('endturn', true)}>
             End turn
           </button>
-          <button type="button" className="btn btn-dark min-h-[48px] px-3 py-2.5 text-xs sm:min-h-[52px] sm:py-4" onClick={() => setTab('deeds')} aria-label="Open deeds">
+          <button type="button" className="btn btn-dark min-h-[48px] px-3 py-2.5 text-xs sm:min-h-[52px] sm:py-4" onClick={() => setHudTab('deeds')} aria-label="Open deeds">
             Deeds
           </button>
-          {mode !== 'mp' && (
-            <button type="button" className="btn btn-dark min-h-[48px] px-3 py-2.5 text-xs sm:min-h-[52px] sm:py-4" onClick={() => setTrade(true)} aria-label="Trade">
-              Trade
-            </button>
-          )}
+          <button type="button" className="btn btn-dark min-h-[48px] px-3 py-2.5 text-xs sm:min-h-[52px] sm:py-4" onClick={() => setTrade(true)} aria-label="Trade">
+            Trade
+          </button>
         </div>
       );
     }
@@ -348,10 +370,33 @@ export default function App() {
                     sfx.unlock();
                     setMuted(sfx.toggle());
                   }}
-                  title={muted ? 'Unmute' : 'Mute'}
-                  aria-label={muted ? 'Unmute' : 'Mute'}
+                  title={muted ? 'Unmute SFX' : 'Mute SFX'}
+                  aria-label={muted ? 'Unmute sound effects' : 'Mute sound effects'}
                 >
-                  {muted ? 'Off' : 'On'}
+                  SFX
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-dark min-h-[36px] px-2 py-1.5 text-[11px] sm:min-h-[40px]"
+                  onClick={() => {
+                    sfx.unlock();
+                    setMusicMuted(sfx.toggleMusic());
+                  }}
+                  title={musicMuted ? 'Unmute music' : 'Mute music'}
+                >
+                  {musicMuted ? '♪' : '♫'}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-dark min-h-[36px] px-2 py-1.5 text-[11px] sm:min-h-[40px]"
+                  onClick={() => {
+                    const next = !colorblind;
+                    settings.setColorblind(next);
+                    setColorblind(next);
+                  }}
+                  title="Colorblind ownership marks"
+                >
+                  CB
                 </button>
                 {mode !== 'mp' && (
                   <button
@@ -367,7 +412,7 @@ export default function App() {
             </div>
             <div ref={boxRef} className="board-stage flex min-h-0 flex-1 items-center justify-center">
               <div style={{ width: boardSize, height: boardSize }}>
-                <Board g={g} onTile={onTile} onCenter={primary}>
+                <Board g={g} onTile={onTile} onCenter={primary} colorblind={colorblind}>
                   <CenterPiece g={g} meId={meId} />
                 </Board>
               </div>
@@ -376,34 +421,64 @@ export default function App() {
 
           <aside className="panel hud-panel flex w-full shrink-0 flex-col gap-1 rounded-xl p-1.5 sm:gap-2 sm:p-2.5 landscape:h-auto landscape:w-[300px] lg:h-auto lg:w-[330px]">
             <div className="grid shrink-0 grid-cols-2 gap-1 landscape:grid-cols-1 lg:grid-cols-1">
-              {g.players.map((p) => (
-                <PlayerCard key={p.id} g={g} pid={p.id} active={g.turn === p.id} />
-              ))}
+              {g.players.map((p) => {
+                const mpPlayer = mp.room?.players.find((rp) => rp.seat === p.id);
+                return (
+                  <PlayerCard
+                    key={p.id}
+                    g={g}
+                    pid={p.id}
+                    active={g.turn === p.id}
+                    disconnected={mode === 'mp' && p.human && mpPlayer?.connected === false}
+                  />
+                );
+              })}
             </div>
 
+            {g.started && <div className="action-dock shrink-0">{actionBar()}</div>}
+
+            {mode === 'solo' && solo.canUndoBuy && (
+              <button
+                type="button"
+                className="btn btn-dark shrink-0 py-2 text-xs"
+                onClick={() => {
+                  if (solo.undoBuy()) hapticNotify('warning');
+                }}
+              >
+                Undo last buy
+              </button>
+            )}
+
             <div className="flex shrink-0 gap-1">
-              {(['log', 'deeds'] as const).map((t) => (
+              {(
+                [
+                  ['play', 'Play'],
+                  ['feed', 'Feed'],
+                  [
+                    'deeds',
+                    `Deeds (${SPACES.filter((s) => s.price && g.props[s.i].owner === meId).length})`,
+                  ],
+                ] as const
+              ).map(([t, label]) => (
                 <button
                   key={t}
                   type="button"
-                  onClick={() => setTab(t)}
+                  onClick={() => setHudTab(t)}
                   className={`min-h-[36px] flex-1 rounded-md py-1 text-[11px] font-semibold transition-colors sm:min-h-[40px] sm:py-1.5 ${
-                    tab === t
+                    hudTab === t
                       ? 'bg-[var(--brass)]/20 text-[var(--champagne)]'
                       : 'bg-black/20 text-[var(--mist)]'
                   }`}
                 >
-                  {t === 'log'
-                    ? 'Feed'
-                    : `Deeds (${SPACES.filter((s) => s.price && g.props[s.i].owner === meId).length})`}
+                  {label}
                 </button>
               ))}
             </div>
 
             <div className="hud-scroll flex min-h-0 flex-1 flex-col overflow-hidden">
-              {tab === 'log' ? (
+              {hudTab === 'feed' ? (
                 <LogPanel g={g} />
-              ) : (
+              ) : hudTab === 'deeds' ? (
                 <DeedList
                   g={g}
                   meId={meId}
@@ -413,10 +488,13 @@ export default function App() {
                   onUnmortgage={active.unmortgage}
                   onInspect={setInspect}
                 />
+              ) : (
+                <p className="px-1 py-2 text-center text-[12px] text-[var(--mist)]">
+                  {myTurn ? 'Your turn — use the button above.' : `${g.players[g.turn]?.name ?? 'Rival'} is playing.`}
+                </p>
               )}
             </div>
 
-            {g.started && <div className="action-dock shrink-0">{actionBar()}</div>}
             {mode === 'mp' && mp.error && (
               <div className="rounded-md bg-[var(--wine)]/25 px-2 py-1.5 text-[11px] text-[#f0b4bb]">{mp.error}</div>
             )}
@@ -462,19 +540,22 @@ export default function App() {
         />
       )}
 
+      {showOnboarding && <OnboardingOverlay onDone={() => setShowOnboarding(false)} />}
+
       {showStart && (
         <StartScreen
           scores={solo.scores}
           showTelegram
+          dailyBest={todayDailyBest()}
           onMultiplayer={() => {
             setWantMp(true);
             setMode('mp');
           }}
-          onStart={(name, opp, look) => {
-            cfg.current = { name, opp, look };
+          onStart={(name, opp, look, opts) => {
+            cfg.current = { name, opp, look, daily: opts?.daily };
             sfx.unlock();
             setMode('solo');
-            solo.start(name, opp, look);
+            solo.start(name, opp, look, opts);
           }}
         />
       )}
@@ -494,6 +575,8 @@ export default function App() {
           onCreate={() => void mp.hostCreate()}
           onJoin={(code) => void mp.join(code)}
           onAppearance={(look) => void mp.syncAppearance(look)}
+          onKick={(id) => void mp.kick(id)}
+          onLock={(locked) => void mp.setLocked(locked)}
         />
       )}
 
@@ -507,6 +590,16 @@ export default function App() {
           scores={mode === 'solo' ? solo.scores : []}
           onRestart={mode === 'solo' ? restart : goSoloMenu}
           onMenu={goSoloMenu}
+          onShare={() => {
+            const url = renderShareCard({
+              g,
+              meId,
+              won: !!(mode === 'solo' ? solo.lastScore?.won : g.winner === meId),
+              score: mode === 'solo' ? solo.lastScore?.score : undefined,
+            });
+            void shareOrDownloadCard(url);
+            hapticNotify('success');
+          }}
         />
       )}
       {!g.paused && g.phase === 'card' && (mode !== 'mp' || g.turn === meId) && (
@@ -517,7 +610,10 @@ export default function App() {
           g={g}
           i={g.buySpace}
           meId={meId}
-          onBuy={() => respond('buy', 'buy')}
+          onBuy={() => {
+            hapticImpact('medium');
+            respond('buy', 'buy');
+          }}
           onAuction={() => respond('buy', 'auction')}
         />
       )}
@@ -529,9 +625,34 @@ export default function App() {
           onPass={() => respond('auction', 'pass')}
         />
       )}
-      {inspect !== null && <InspectOverlay g={g} i={inspect} onClose={() => setInspect(null)} />}
-      {trade && mode === 'solo' && g.started && g.phase !== 'over' && (
-        <TradeOverlay g={g} onClose={() => setTrade(false)} onOffer={solo.proposeTrade} />
+      {inspect !== null && (
+        <InspectOverlay g={g} i={inspect} onClose={() => setInspect(null)} />
+      )}
+      {trade && g.started && g.phase !== 'over' && (
+        <TradeOverlay
+          g={g}
+          meId={meId}
+          onClose={() => setTrade(false)}
+          onOffer={mode === 'mp' ? mp.proposeTrade : solo.proposeTrade}
+        />
+      )}
+      {mode === 'mp' && mp.pendingTrade && mp.pendingTrade.to === meId && (
+        <div className="fadein fixed inset-0 z-[48] flex items-end justify-center bg-black/60 p-3 sm:items-center">
+          <div className="panel sheet-panel w-full max-w-sm rounded-xl p-4 sm:rounded-xl">
+            <h3 className="deco text-center text-xl gold-text">Trade offer</h3>
+            <p className="mt-2 text-center text-[13px] text-[var(--mist)]">
+              {g.players[mp.pendingTrade.from]?.name} wants to trade with you.
+            </p>
+            <div className="mt-4 flex gap-2">
+              <button type="button" className="btn btn-gold flex-1 py-3" onClick={() => mp.respondTrade(true)}>
+                Accept
+              </button>
+              <button type="button" className="btn btn-dark flex-1 py-3" onClick={() => mp.respondTrade(false)}>
+                Decline
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

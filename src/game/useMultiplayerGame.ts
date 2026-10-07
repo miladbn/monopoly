@@ -3,8 +3,11 @@ import {
   createRoom,
   fetchRoom,
   joinRoom,
+  kickPlayer,
   roomCodeFromInput,
   sendAction,
+  sendHeartbeat,
+  setLobbyLock,
   setPlayerAppearance,
   setReady,
   startRoom,
@@ -12,6 +15,7 @@ import {
   type PublicRoom,
 } from '../telegram/api';
 import { getInitData, isTelegram } from '../telegram/webapp';
+import { settings } from './settings';
 import { Game, newGame } from './engine';
 import { loadPlayerProfile, savePlayerProfile } from './playerProfile';
 import type { MpActionType } from './mpEngine';
@@ -35,7 +39,8 @@ export function useMultiplayerGame(initialRoomId?: string) {
   const [busy, setBusy] = useState(false);
   const [scores] = useState<HighScore[]>([]);
   const [lastScore] = useState<HighScore | null>(null);
-  const roomIdRef = useRef<string | null>(initialRoomId || null);
+  const [optimisticRolling, setOptimisticRolling] = useState(false);
+  const roomIdRef = useRef<string | null>(initialRoomId || settings.getReconnectRoom() || null);
   const versionRef = useRef(0);
   const acting = useRef(false);
   const profileRef = useRef<PlayerAppearance>(loadPlayerProfile());
@@ -44,12 +49,15 @@ export function useMultiplayerGame(initialRoomId?: string) {
   if (room?.status === 'playing' || room?.status === 'ended') {
     g.started = true;
   }
+  if (optimisticRolling) g.rolling = true;
 
   const applyRoom = useCallback((r: PublicRoom) => {
     setRoom(r);
     roomIdRef.current = r.id;
     versionRef.current = r.version;
+    settings.setReconnectRoom(r.id);
     setError(null);
+    setOptimisticRolling(false);
   }, []);
 
   const polling = useRef(false);
@@ -61,27 +69,32 @@ export function useMultiplayerGame(initialRoomId?: string) {
       const r = await fetchRoom(id);
       if (r.version >= versionRef.current) applyRoom(r);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Poll failed');
+      setError(e instanceof Error ? e.message : 'Could not refresh the room. Check your connection.');
     } finally {
       polling.current = false;
     }
   }, [applyRoom]);
 
+  // Reconnect / deep-link join
   useEffect(() => {
-    if (!initialRoomId) return;
+    const id = initialRoomId || settings.getReconnectRoom();
+    if (!id) return;
     let cancelled = false;
     (async () => {
       setBusy(true);
       try {
         if (getInitData()) {
-          const r = await joinRoom(initialRoomId, profileRef.current);
+          const r = await joinRoom(id, profileRef.current);
           if (!cancelled) applyRoom(r);
         } else {
-          const r = await fetchRoom(initialRoomId);
+          const r = await fetchRoom(id);
           if (!cancelled) applyRoom(r);
         }
       } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : 'Join failed');
+        if (!cancelled) {
+          settings.setReconnectRoom(null);
+          setError(e instanceof Error ? e.message : 'Could not rejoin room');
+        }
       } finally {
         if (!cancelled) setBusy(false);
       }
@@ -91,13 +104,38 @@ export function useMultiplayerGame(initialRoomId?: string) {
     };
   }, [initialRoomId, applyRoom]);
 
+  // Adaptive poll: faster on your turn / auction / lobby
   useEffect(() => {
     if (!room?.id) return;
+    const mySeat = room.mySeat;
+    const urgent =
+      room.status === 'lobby' ||
+      (room.game &&
+        mySeat !== undefined &&
+        (room.game.turn === mySeat ||
+          room.game.phase === 'auction' ||
+          (room.game as { pendingTrade?: { to: number } | null }).pendingTrade?.to === mySeat));
+    const ms = urgent ? 500 : 1600;
     const t = setInterval(() => {
       void refresh();
-    }, 1500);
+    }, ms);
     return () => clearInterval(t);
-  }, [room?.id, refresh]);
+  }, [room?.id, room?.status, room?.mySeat, room?.game?.turn, room?.game?.phase, room?.version, refresh]);
+
+  // Heartbeat presence
+  useEffect(() => {
+    if (!room?.id || !getInitData()) return;
+    const beat = async () => {
+      try {
+        applyRoom(await sendHeartbeat(room.id));
+      } catch {
+        /* ignore transient */
+      }
+    };
+    void beat();
+    const t = setInterval(() => void beat(), 12000);
+    return () => clearInterval(t);
+  }, [room?.id, applyRoom]);
 
   const hostCreate = useCallback(async () => {
     setBusy(true);
@@ -106,7 +144,7 @@ export function useMultiplayerGame(initialRoomId?: string) {
       ensureAuth();
       applyRoom(await createRoom(profileRef.current));
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Create failed');
+      setError(e instanceof Error ? e.message : 'Could not create room');
     } finally {
       setBusy(false);
     }
@@ -120,7 +158,7 @@ export function useMultiplayerGame(initialRoomId?: string) {
         ensureAuth();
         applyRoom(await joinRoom(roomCodeFromInput(id), profileRef.current));
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Join failed');
+        setError(e instanceof Error ? e.message : 'Could not join room');
       } finally {
         setBusy(false);
       }
@@ -132,7 +170,7 @@ export function useMultiplayerGame(initialRoomId?: string) {
     async (value: boolean) => {
       const id = roomIdRef.current || room?.id;
       if (!id) {
-        setError('Room id required — create or join a room first');
+        setError('Create or join a room first');
         return;
       }
       roomIdRef.current = id;
@@ -149,7 +187,7 @@ export function useMultiplayerGame(initialRoomId?: string) {
   const startMatch = useCallback(async () => {
     const id = roomIdRef.current || room?.id;
     if (!id) {
-      setError('Room id required — create or join a room first');
+      setError('Create or join a room first');
       return;
     }
     roomIdRef.current = id;
@@ -159,7 +197,7 @@ export function useMultiplayerGame(initialRoomId?: string) {
       ensureAuth();
       applyRoom(await startRoom(id, true));
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Start failed');
+      setError(e instanceof Error ? e.message : 'Could not start the game');
     } finally {
       setBusy(false);
     }
@@ -168,6 +206,7 @@ export function useMultiplayerGame(initialRoomId?: string) {
   const leaveLobby = useCallback(() => {
     roomIdRef.current = null;
     versionRef.current = 0;
+    settings.setReconnectRoom(null);
     setRoom(null);
     setError(null);
   }, []);
@@ -188,15 +227,45 @@ export function useMultiplayerGame(initialRoomId?: string) {
     [applyRoom, room?.id, room?.status],
   );
 
+  const kick = useCallback(
+    async (targetId: number) => {
+      const id = roomIdRef.current || room?.id;
+      if (!id) return;
+      try {
+        ensureAuth();
+        applyRoom(await kickPlayer(id, targetId));
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Kick failed');
+      }
+    },
+    [applyRoom, room?.id],
+  );
+
+  const setLocked = useCallback(
+    async (locked: boolean) => {
+      const id = roomIdRef.current || room?.id;
+      if (!id) return;
+      try {
+        ensureAuth();
+        applyRoom(await setLobbyLock(id, locked));
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Could not update lock');
+      }
+    },
+    [applyRoom, room?.id],
+  );
+
   const act = useCallback(
     async (type: MpActionType, payload?: unknown) => {
       if (!roomIdRef.current || acting.current) return;
       acting.current = true;
+      if (type === 'roll' || (type === 'jail' && payload === 'roll')) setOptimisticRolling(true);
       try {
         ensureAuth();
         applyRoom(await sendAction(roomIdRef.current, type, payload));
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Action failed');
+        setOptimisticRolling(false);
+        setError(e instanceof Error ? e.message : 'Action failed — try again');
         await refresh();
       } finally {
         acting.current = false;
@@ -219,7 +288,20 @@ export function useMultiplayerGame(initialRoomId?: string) {
   const sellHouse = useCallback((i: number) => void act('sellHouse', i), [act]);
   const mortgage = useCallback((i: number) => void act('mortgage', i), [act]);
   const unmortgage = useCallback((i: number) => void act('unmortgage', i), [act]);
-  const proposeTrade = useCallback(() => ({ ok: false as const, msg: 'Trades coming soon in multiplayer.' }), []);
+
+  const proposeTrade = useCallback(
+    (rival: number, give: number[], get: number[], cash: number) => {
+      void act('tradeOffer', { to: rival, give, get, cash });
+      return { ok: true as const, msg: 'Offer sent…' };
+    },
+    [act],
+  );
+
+  const respondTrade = useCallback(
+    (accept: boolean) => void act('tradeRespond', { accept }),
+    [act],
+  );
+
   const noop = useCallback(() => undefined, []);
   const setSpeed = useCallback((_v: number) => undefined, []);
   const startSolo = useCallback((_name: string, _opp: number, _look?: PlayerAppearance) => undefined, []);
@@ -238,11 +320,14 @@ export function useMultiplayerGame(initialRoomId?: string) {
     startMatch,
     leaveLobby,
     syncAppearance,
+    kick,
+    setLocked,
     build,
     sellHouse,
     mortgage,
     unmortgage,
     proposeTrade,
+    respondTrade,
     scores,
     lastScore,
     toMenu: leaveLobby,
@@ -253,5 +338,6 @@ export function useMultiplayerGame(initialRoomId?: string) {
     sync: noop,
     start: startSolo,
     isMultiplayer: true as const,
+    pendingTrade: room?.game && 'pendingTrade' in room.game ? room.game.pendingTrade : null,
   };
 }

@@ -16,14 +16,19 @@ export function Modal({
   children,
   z = 40,
   dim = 0.72,
+  sheet = false,
 }: {
   children: React.ReactNode;
   z?: number;
   dim?: number;
+  /** Bottom sheet on narrow screens; centered on sm+ */
+  sheet?: boolean;
 }) {
   return (
     <div
-      className="fadein fixed inset-0 flex items-center justify-center p-2 sm:p-3"
+      className={`fadein fixed inset-0 flex p-2 sm:items-center sm:justify-center sm:p-3 ${
+        sheet ? 'items-end justify-center' : 'items-center justify-center'
+      }`}
       style={{
         zIndex: z,
         background: `rgba(6,14,12,${dim})`,
@@ -106,19 +111,21 @@ export function StartScreen({
   onStart,
   onMultiplayer,
   showTelegram,
+  dailyBest,
 }: {
   scores: HighScore[];
-  onStart: (name: string, opponents: number, appearance: PlayerAppearance) => void;
+  onStart: (name: string, opponents: number, appearance: PlayerAppearance, opts?: { daily?: boolean }) => void;
   onMultiplayer?: () => void;
   showTelegram?: boolean;
+  dailyBest?: { score: number; won: boolean } | null;
 }) {
   const [name, setName] = useState(() => loadPlayerName());
   const [opp, setOpp] = useState(3);
   const [appearance, setAppearance] = useState(loadPlayerProfile);
-  const go = () => {
+  const go = (daily = false) => {
     savePlayerName(name);
     savePlayerProfile(appearance);
-    onStart(name.trim() || 'You', opp, appearance);
+    onStart(name.trim() || 'You', daily ? 3 : opp, appearance, { daily });
   };
   return (
     <Modal dim={0.88}>
@@ -140,7 +147,7 @@ export function StartScreen({
               id="tycoon-name"
               value={name}
               onChange={(e) => setName(e.target.value.slice(0, 14))}
-              onKeyDown={(e) => e.key === 'Enter' && go()}
+              onKeyDown={(e) => e.key === 'Enter' && go(false)}
               placeholder="Tycoon"
               className="field"
               autoComplete="nickname"
@@ -170,8 +177,12 @@ export function StartScreen({
             }}
             compact
           />
-          <button type="button" onClick={go} className="btn btn-gold pulse-glow w-full py-3 text-base sm:py-3.5">
+          <button type="button" onClick={() => go(false)} className="btn btn-gold pulse-glow w-full py-3 text-base sm:py-3.5">
             Play solo
+          </button>
+          <button type="button" onClick={() => go(true)} className="btn btn-dark w-full py-2.5 text-sm sm:py-3">
+            Daily challenge
+            {dailyBest ? ` · best ${dailyBest.score.toLocaleString()}` : ''}
           </button>
           {showTelegram && onMultiplayer && (
             <button type="button" onClick={onMultiplayer} className="btn btn-dark w-full py-2.5 text-sm sm:py-3">
@@ -228,12 +239,14 @@ export function GameOverOverlay({
   scores,
   onRestart,
   onMenu,
+  onShare,
 }: {
   g: Game;
   last: HighScore | null;
   scores: HighScore[];
   onRestart: () => void;
   onMenu: () => void;
+  onShare?: () => void;
 }) {
   const won = !!last?.won;
   const winner = g.winner !== null ? g.players[g.winner] : null;
@@ -298,9 +311,16 @@ export function GameOverOverlay({
           </div>
         )}
 
-        <div className="mt-5 flex gap-2">
-          <button type="button" onClick={onRestart} className="btn btn-gold flex-1 py-2.5">Play again</button>
-          <button type="button" onClick={onMenu} className="btn btn-dark flex-1 py-2.5">Menu</button>
+        <div className="mt-5 flex flex-col gap-2">
+          {onShare && (
+            <button type="button" onClick={onShare} className="btn btn-dark w-full py-2.5">
+              Share result
+            </button>
+          )}
+          <div className="flex gap-2">
+            <button type="button" onClick={onRestart} className="btn btn-gold flex-1 py-2.5">Play again</button>
+            <button type="button" onClick={onMenu} className="btn btn-dark flex-1 py-2.5">Menu</button>
+          </div>
         </div>
       </div>
     </Modal>
@@ -436,8 +456,9 @@ export function InspectOverlay({ g, i, onClose }: { g: Game; i: number; onClose:
   const sp = SPACES[i];
   if (!sp.price) {
     return (
-      <Modal z={46} dim={0.6}>
-        <div className="popin panel w-full max-w-[260px] rounded-xl p-5 text-center" onClick={onClose}>
+      <Modal z={46} dim={0.6} sheet>
+        <div className="popin panel sheet-panel w-full max-w-md rounded-t-2xl p-5 text-center sm:max-w-[280px] sm:rounded-xl" onClick={onClose}>
+          <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-[var(--brass)]/35 sm:hidden" aria-hidden />
           <div className="deco text-xl gold-text">{sp.name}</div>
           <p className="mt-3 text-[13px] leading-relaxed text-[var(--mist)]">
             {sp.type === 'tax' && `Pay ${money(sp.tax!)} to the bank.`}
@@ -455,8 +476,9 @@ export function InspectOverlay({ g, i, onClose }: { g: Game; i: number; onClose:
   }
   const group = sp.group!;
   return (
-    <Modal z={46} dim={0.6}>
-      <div className="popin w-full max-w-[280px]" onClick={onClose}>
+    <Modal z={46} dim={0.6} sheet>
+      <div className="popin sheet-panel w-full max-w-md sm:max-w-[280px]" onClick={onClose}>
+        <div className="mx-auto mb-2 h-1 w-10 rounded-full bg-[var(--brass)]/35 sm:hidden" aria-hidden />
         <TitleDeed g={g} i={i} />
         <div className="mt-2 flex justify-center gap-1">
           {GROUP_MEMBERS[group].map((j) => (

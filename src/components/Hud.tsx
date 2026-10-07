@@ -61,7 +61,17 @@ export function CenterPiece({ g, meId = 0 }: { g: Game; meId?: number }) {
   );
 }
 
-export function PlayerCard({ g, pid, active }: { g: Game; pid: number; active: boolean }) {
+export function PlayerCard({
+  g,
+  pid,
+  active,
+  disconnected,
+}: {
+  g: Game;
+  pid: number;
+  active: boolean;
+  disconnected?: boolean;
+}) {
   const p = g.players[pid];
   const props = playerProps(g, pid);
   const groups: Record<string, number> = {};
@@ -71,7 +81,9 @@ export function PlayerCard({ g, pid, active }: { g: Game; pid: number; active: b
   });
   return (
     <div
-      className={`relative rounded-lg px-2 py-1.5 transition-all duration-200 ${p.bankrupt ? 'opacity-40 grayscale' : ''}`}
+      className={`relative rounded-lg px-2 py-1.5 transition-all duration-200 ${p.bankrupt ? 'opacity-40 grayscale' : ''} ${
+        active ? 'turn-pulse' : ''
+      }`}
       style={{
         background: active ? `linear-gradient(90deg, ${p.color}26, transparent)` : 'rgba(255,255,255,.03)',
         boxShadow: active ? `inset 0 0 0 1px ${p.color}aa` : 'inset 0 0 0 1px rgba(255,255,255,.06)',
@@ -90,6 +102,7 @@ export function PlayerCard({ g, pid, active }: { g: Game; pid: number; active: b
               {p.name}
               {p.inJail && <span className="ml-1 text-[9px] font-semibold text-orange-300/90">jail</span>}
               {p.getOut > 0 && <span className="ml-1 text-[9px] font-semibold text-[var(--brass)]">card×{p.getOut}</span>}
+              {disconnected && <span className="ml-1 text-[9px] font-semibold text-[#e07a88]">away</span>}
             </span>
             <span className="shrink-0 text-[12px] font-extrabold tabular-nums text-emerald-300/90">{money(p.cash)}</span>
           </div>
