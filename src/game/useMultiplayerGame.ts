@@ -21,11 +21,18 @@ import {
 import { getInitData, isTelegram } from '../telegram/webapp';
 import { getEquippedTitle } from './achievements';
 import { settings } from './settings';
-import { emptyMenuGame, Game } from './engine';
+import { Game, newGame } from './engine';
 import { loadPlayerProfile, savePlayerProfile } from './playerProfile';
 import { newClientActionId } from './actions';
 import type { MpActionType } from './mpEngine';
 import type { HighScore } from './useGame';
+
+function emptyGame(): Game {
+  const g = newGame('You', 3);
+  g.started = false;
+  g.phase = 'menu';
+  return g;
+}
 
 function ensureAuth() {
   if (!getInitData() && isTelegram()) throw new Error('Telegram initData missing — open via the bot');
@@ -45,7 +52,7 @@ export function useMultiplayerGame(initialRoomId?: string) {
   const profileRef = useRef<PlayerAppearance>(loadPlayerProfile());
 
   const baseGame: Game =
-    room?.game && (room.status === 'playing' || room.status === 'ended') ? room.game : emptyMenuGame();
+    room?.game && (room.status === 'playing' || room.status === 'ended') ? room.game : emptyGame();
   const g: Game =
     room?.status === 'playing' || room?.status === 'ended'
       ? {

@@ -207,13 +207,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (action === 'ready') {
-      try {
-        const { setReady } = await import('../server-bundle/rooms.js');
-        const room = await setReady(roomId, user.id, body.ready !== false);
-        return json(res, 200, { room: publicRoom(room as unknown as Record<string, unknown>, user.id) });
-      } catch (e) {
-        return json(res, 400, { error: e instanceof Error ? e.message : 'Ready failed' });
-      }
+      const room = await loadRoom(roomId);
+      if (!room) return json(res, 404, { error: 'Room not found' });
+      if (room.status !== 'lobby') return json(res, 400, { error: 'Game already started' });
+      const p = (room.players as { telegramId: number; ready: boolean; lastSeenAt?: number }[]).find(
+        (x) => x.telegramId === user.id,
+      );
+      if (!p) return json(res, 400, { error: 'Not in room' });
+      p.ready = body.ready !== false;
+      p.lastSeenAt = Date.now();
+      await saveRoom(room);
+      return json(res, 200, { room: publicRoom(room, user.id) });
     }
 
     if (action === 'heartbeat') {
@@ -275,11 +279,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (action === 'action') {
       const { applyRoomAction } = await import('../server-bundle/rooms.js');
       if (!body.type) return json(res, 400, { error: 'Action type required' });
-      if (!body.clientActionId) return json(res, 400, { error: 'clientActionId required' });
       const room = await applyRoomAction(roomId, user.id, {
         type: String(body.type),
         payload: body.payload,
-        clientActionId: String(body.clientActionId),
+        clientActionId: body.clientActionId ? String(body.clientActionId) : undefined,
       });
       return json(res, 200, { room: publicRoom(room as unknown as Record<string, unknown>, user.id) });
     }

@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, type ReactNode } from 'react';
 
 export function Modal({
   children,
@@ -18,54 +18,21 @@ export function Modal({
   /** Accessible name for the dialog */
   label?: string;
 }) {
-  const rootRef = useRef<HTMLDivElement>(null);
-
   useEffect(() => {
-    const root = rootRef.current;
-    if (!root) return;
-
-    const previouslyFocused = document.activeElement as HTMLElement | null;
-    const focusables = () =>
-      Array.from(
-        root.querySelectorAll<HTMLElement>(
-          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-        ),
-      ).filter((el) => !el.hasAttribute('disabled') && el.tabIndex !== -1);
-
-    const first = focusables()[0];
-    first?.focus();
-
+    if (!onClose) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && onClose) {
+      if (e.key === 'Escape') {
         e.preventDefault();
         e.stopPropagation();
         onClose();
-        return;
-      }
-      if (e.key !== 'Tab') return;
-      const list = focusables();
-      if (!list.length) return;
-      const firstEl = list[0];
-      const lastEl = list[list.length - 1];
-      if (e.shiftKey && document.activeElement === firstEl) {
-        e.preventDefault();
-        lastEl.focus();
-      } else if (!e.shiftKey && document.activeElement === lastEl) {
-        e.preventDefault();
-        firstEl.focus();
       }
     };
-
     window.addEventListener('keydown', onKey, true);
-    return () => {
-      window.removeEventListener('keydown', onKey, true);
-      previouslyFocused?.focus?.();
-    };
+    return () => window.removeEventListener('keydown', onKey, true);
   }, [onClose]);
 
   return (
     <div
-      ref={rootRef}
       className={`fadein fixed inset-0 flex p-2 sm:items-center sm:justify-center sm:p-3 ${
         sheet ? 'items-end justify-center' : 'items-center justify-center'
       }`}

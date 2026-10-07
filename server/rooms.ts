@@ -1,4 +1,3 @@
-import { randomBytes } from 'node:crypto';
 import { buildMultiplayerSeats } from '../src/game/playerProfile';
 import { applyAction, createRuntime } from '../src/game/mpEngine';
 import { kvDel, kvGet, kvSet, kvSetNx, kvSadd, kvSmembers, kvSrem } from './redis';
@@ -15,9 +14,8 @@ const REACTION_EMOJI = new Set(['😂', '🔥', '👏', '😱', '💀', '🎩', 
 
 function roomId(): string {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  const bytes = randomBytes(6);
   let s = '';
-  for (let i = 0; i < 6; i++) s += alphabet[bytes[i] % alphabet.length];
+  for (let i = 0; i < 6; i++) s += alphabet[(Math.random() * alphabet.length) | 0];
   return s;
 }
 
@@ -164,46 +162,44 @@ export async function joinRoom(
     title?: string;
   },
 ): Promise<Room> {
-  return withRoomLock(id, async () => {
-    const room = await getRoom(id);
-    if (!room) throw new Error('Room not found');
-    if (room.status === 'ended') throw new Error('Game already ended — ask host to rematch');
-    if (room.status === 'playing') {
-      return joinAsSpectatorUnlocked(room, player);
-    }
-    const existing = room.players.find((p) => p.telegramId === player.telegramId);
-    if (existing) {
-      existing.name = player.name;
-      existing.avatar = player.avatar;
-      if (player.pieceToken) existing.pieceToken = player.pieceToken;
-      if (player.pieceColor) existing.pieceColor = player.pieceColor;
-      if (player.title !== undefined) existing.title = player.title;
-      existing.lastSeenAt = Date.now();
-      await save(room);
-      return room;
-    }
-    if (room.joinLocked) throw new Error('Host locked this lobby');
-    if (room.players.length >= room.maxPlayers) throw new Error('Room is full');
-    const seat = room.players.length;
-    room.players.push({
-      telegramId: player.telegramId,
-      name: player.name,
-      avatar: player.avatar,
-      pieceToken: player.pieceToken,
-      pieceColor: player.pieceColor,
-      title: player.title,
-      ready: false,
-      seat,
-      lastSeenAt: Date.now(),
-    });
-    room.seatMap[seat] = player.telegramId;
+  const room = await getRoom(id);
+  if (!room) throw new Error('Room not found');
+  if (room.status === 'ended') throw new Error('Game already ended — ask host to rematch');
+  if (room.status === 'playing') {
+    return joinAsSpectator(id, player);
+  }
+  const existing = room.players.find((p) => p.telegramId === player.telegramId);
+  if (existing) {
+    existing.name = player.name;
+    existing.avatar = player.avatar;
+    if (player.pieceToken) existing.pieceToken = player.pieceToken;
+    if (player.pieceColor) existing.pieceColor = player.pieceColor;
+    if (player.title !== undefined) existing.title = player.title;
+    existing.lastSeenAt = Date.now();
     await save(room);
     return room;
+  }
+  if (room.joinLocked) throw new Error('Host locked this lobby');
+  if (room.players.length >= room.maxPlayers) throw new Error('Room is full');
+  const seat = room.players.length;
+  room.players.push({
+    telegramId: player.telegramId,
+    name: player.name,
+    avatar: player.avatar,
+    pieceToken: player.pieceToken,
+    pieceColor: player.pieceColor,
+    title: player.title,
+    ready: false,
+    seat,
+    lastSeenAt: Date.now(),
   });
+  room.seatMap[seat] = player.telegramId;
+  await save(room);
+  return room;
 }
 
-async function joinAsSpectatorUnlocked(
-  room: Room,
+export async function joinAsSpectator(
+  id: string,
   player: {
     telegramId: number;
     name: string;
@@ -213,6 +209,8 @@ async function joinAsSpectatorUnlocked(
     title?: string;
   },
 ): Promise<Room> {
+  const room = await getRoom(id);
+  if (!room) throw new Error('Room not found');
   if (room.status !== 'playing' && room.status !== 'ended') {
     throw new Error('Game has not started yet — join as a player');
   }
@@ -243,24 +241,6 @@ async function joinAsSpectatorUnlocked(
   return room;
 }
 
-export async function joinAsSpectator(
-  id: string,
-  player: {
-    telegramId: number;
-    name: string;
-    avatar?: string;
-    pieceToken?: string;
-    pieceColor?: string;
-    title?: string;
-  },
-): Promise<Room> {
-  return withRoomLock(id, async () => {
-    const room = await getRoom(id);
-    if (!room) throw new Error('Room not found');
-    return joinAsSpectatorUnlocked(room, player);
-  });
-}
-
 export async function heartbeat(id: string, telegramId: number): Promise<Room> {
   return withRoomLock(id, async () => {
     const room = await getRoom(id);
@@ -276,34 +256,30 @@ export async function heartbeat(id: string, telegramId: number): Promise<Room> {
 }
 
 export async function kickPlayer(id: string, hostId: number, targetId: number): Promise<Room> {
-  return withRoomLock(id, async () => {
-    const room = await getRoom(id);
-    if (!room) throw new Error('Room not found');
-    if (room.status !== 'lobby') throw new Error('Can only kick in lobby');
-    if (room.hostTelegramId !== hostId) throw new Error('Only the host can kick');
-    if (targetId === hostId) throw new Error('Host cannot kick themselves');
-    room.players = room.players.filter((p) => p.telegramId !== targetId);
-    room.players.forEach((p, i) => {
-      p.seat = i;
-    });
-    room.seatMap = {};
-    room.players.forEach((p, i) => {
-      room.seatMap[i] = p.telegramId;
-    });
-    await save(room);
-    return room;
+  const room = await getRoom(id);
+  if (!room) throw new Error('Room not found');
+  if (room.status !== 'lobby') throw new Error('Can only kick in lobby');
+  if (room.hostTelegramId !== hostId) throw new Error('Only the host can kick');
+  if (targetId === hostId) throw new Error('Host cannot kick themselves');
+  room.players = room.players.filter((p) => p.telegramId !== targetId);
+  room.players.forEach((p, i) => {
+    p.seat = i;
   });
+  room.seatMap = {};
+  room.players.forEach((p, i) => {
+    room.seatMap[i] = p.telegramId;
+  });
+  await save(room);
+  return room;
 }
 
 export async function setJoinLocked(id: string, hostId: number, locked: boolean): Promise<Room> {
-  return withRoomLock(id, async () => {
-    const room = await getRoom(id);
-    if (!room) throw new Error('Room not found');
-    if (room.hostTelegramId !== hostId) throw new Error('Only the host can lock the lobby');
-    room.joinLocked = locked;
-    await save(room);
-    return room;
-  });
+  const room = await getRoom(id);
+  if (!room) throw new Error('Room not found');
+  if (room.hostTelegramId !== hostId) throw new Error('Only the host can lock the lobby');
+  room.joinLocked = locked;
+  await save(room);
+  return room;
 }
 
 export async function setPlayerAppearance(
@@ -311,32 +287,27 @@ export async function setPlayerAppearance(
   telegramId: number,
   appearance: { pieceToken: string; pieceColor: string; title?: string },
 ): Promise<Room> {
-  return withRoomLock(id, async () => {
-    const room = await getRoom(id);
-    if (!room) throw new Error('Room not found');
-    if (room.status !== 'lobby') throw new Error('Game already started');
-    const p = room.players.find((x) => x.telegramId === telegramId);
-    if (!p) throw new Error('Not in room');
-    p.pieceToken = appearance.pieceToken;
-    p.pieceColor = appearance.pieceColor;
-    if (appearance.title !== undefined) p.title = appearance.title;
-    await save(room);
-    return room;
-  });
+  const room = await getRoom(id);
+  if (!room) throw new Error('Room not found');
+  if (room.status !== 'lobby') throw new Error('Game already started');
+  const p = room.players.find((x) => x.telegramId === telegramId);
+  if (!p) throw new Error('Not in room');
+  p.pieceToken = appearance.pieceToken;
+  p.pieceColor = appearance.pieceColor;
+  if (appearance.title !== undefined) p.title = appearance.title;
+  await save(room);
+  return room;
 }
 
 export async function setReady(id: string, telegramId: number, ready: boolean): Promise<Room> {
-  return withRoomLock(id, async () => {
-    const room = await getRoom(id);
-    if (!room) throw new Error('Room not found');
-    if (room.status !== 'lobby') throw new Error('Game already started');
-    const p = room.players.find((x) => x.telegramId === telegramId);
-    if (!p) throw new Error('Not in room');
-    p.ready = ready;
-    p.lastSeenAt = Date.now();
-    await save(room);
-    return room;
-  });
+  const room = await getRoom(id);
+  if (!room) throw new Error('Room not found');
+  if (room.status !== 'lobby') throw new Error('Game already started');
+  const p = room.players.find((x) => x.telegramId === telegramId);
+  if (!p) throw new Error('Not in room');
+  p.ready = ready;
+  await save(room);
+  return room;
 }
 
 function startRuntime(room: Room): void {
@@ -361,19 +332,17 @@ function startRuntime(room: Room): void {
 }
 
 export async function startRoom(id: string, telegramId: number, fillAi = true): Promise<Room> {
-  return withRoomLock(id, async () => {
-    const room = await getRoom(id);
-    if (!room) throw new Error('Room not found');
-    if (room.status !== 'lobby') throw new Error('Already started');
-    if (room.hostTelegramId !== telegramId) throw new Error('Only the host can start');
-    if (room.players.length < 1) throw new Error('Need at least one player');
-    if (!fillAi && room.players.length < 2) throw new Error('Need at least 2 players (or enable AI fill)');
+  const room = await getRoom(id);
+  if (!room) throw new Error('Room not found');
+  if (room.status !== 'lobby') throw new Error('Already started');
+  if (room.hostTelegramId !== telegramId) throw new Error('Only the host can start');
+  if (room.players.length < 1) throw new Error('Need at least one player');
+  if (!fillAi && room.players.length < 2) throw new Error('Need at least 2 players (or enable AI fill)');
 
-    startRuntime(room);
-    await save(room);
-    await noteGame();
-    return room;
-  });
+  startRuntime(room);
+  await save(room);
+  await noteGame();
+  return room;
 }
 
 function recordSeriesWin(room: Room): void {
@@ -389,19 +358,17 @@ function recordSeriesWin(room: Room): void {
 }
 
 export async function rematchRoom(id: string, telegramId: number): Promise<Room> {
-  return withRoomLock(id, async () => {
-    const room = await getRoom(id);
-    if (!room) throw new Error('Room not found');
-    if (room.status !== 'ended') throw new Error('Rematch only after the game ends');
-    if (room.hostTelegramId !== telegramId) throw new Error('Only the host can rematch');
-    if (room.players.length < 1) throw new Error('No players left');
+  const room = await getRoom(id);
+  if (!room) throw new Error('Room not found');
+  if (room.status !== 'ended') throw new Error('Rematch only after the game ends');
+  if (room.hostTelegramId !== telegramId) throw new Error('Only the host can rematch');
+  if (room.players.length < 1) throw new Error('No players left');
 
-    startRuntime(room);
-    room.spectators = room.spectators || [];
-    await save(room);
-    await noteGame();
-    return room;
-  });
+  startRuntime(room);
+  room.spectators = room.spectators || [];
+  await save(room);
+  await noteGame();
+  return room;
 }
 
 export async function postReaction(
@@ -446,18 +413,21 @@ export async function applyRoomAction(
     const seat = Number(seatEntry[0]);
 
     const cid = action.clientActionId ? String(action.clientActionId).slice(0, 80) : '';
-    if (!cid) throw new Error('clientActionId required');
-    const recent = room.recentActionIds || [];
-    if (recent.includes(cid)) {
-      // Idempotent replay — return current room without re-applying.
-      return room;
+    if (cid) {
+      const recent = room.recentActionIds || [];
+      if (recent.includes(cid)) {
+        // Idempotent replay — return current room without re-applying.
+        return room;
+      }
     }
 
     room.runtime = applyAction(room.runtime as never, seat, {
       type: action.type,
       payload: action.payload,
     } as never) as unknown as RoomRuntime;
-    room.recentActionIds = [...recent, cid].slice(-40);
+    if (cid) {
+      room.recentActionIds = [...(room.recentActionIds || []), cid].slice(-40);
+    }
     if (room.runtime.game.phase === 'over') {
       room.status = 'ended';
       recordSeriesWin(room);

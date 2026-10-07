@@ -1,37 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { LogEntry, LogKind } from '../game/engine';
-
-const KIND_TOAST: Set<LogKind> = new Set([
-  'rent',
-  'buy',
-  'pay',
-  'jail',
-  'trade',
-  'go',
-  'auction',
-  'bankrupt',
-  'build',
-]);
-
-function isInteresting(entry: LogEntry): boolean {
-  if (entry.kind && KIND_TOAST.has(entry.kind)) return true;
-  if (entry.kind === 'info') return false;
-  // Fallback for older log lines without kind
-  const t = entry.text.toLowerCase();
-  return (
-    t.includes('pays') ||
-    t.includes('rent') ||
-    t.includes('buys') ||
-    t.includes('sold') ||
-    t.includes('bankrupt') ||
-    t.includes('collects') ||
-    t.includes('auction') ||
-    t.includes('jail') ||
-    t.includes('trade') ||
-    t.includes('builds') ||
-    t.includes('passes go')
-  );
-}
+import type { LogEntry } from '../game/engine';
 
 /** Surfaces the latest meaningful log line as a brief toast. */
 export default function Toast({ log }: { log: LogEntry[] }) {
@@ -39,7 +7,21 @@ export default function Toast({ log }: { log: LogEntry[] }) {
 
   useEffect(() => {
     const top = log[0];
-    if (!top || !isInteresting(top)) return;
+    if (!top) return;
+    const t = top.text.toLowerCase();
+    const interesting =
+      t.includes('pays') ||
+      t.includes('rent') ||
+      t.includes('buys') ||
+      t.includes('sold') ||
+      t.includes('bankrupt') ||
+      t.includes('collects') ||
+      t.includes('auction') ||
+      t.includes('jail') ||
+      t.includes('trade') ||
+      t.includes('builds') ||
+      t.includes('passes go');
+    if (!interesting) return;
     setToast({ id: top.id, text: top.text.replace(/^[^\w]+/, ''), color: top.color });
     const timer = window.setTimeout(() => setToast((cur) => (cur?.id === top.id ? null : cur)), 2800);
     return () => window.clearTimeout(timer);

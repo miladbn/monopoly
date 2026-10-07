@@ -65,7 +65,6 @@ export function setPlayerAppearance(roomId: string, telegramId: number, appearan
 export function heartbeat(roomId: string, telegramId: number): Promise<unknown>;
 export function kickPlayer(roomId: string, hostId: number, targetId: number): Promise<unknown>;
 export function setJoinLocked(roomId: string, hostId: number, locked: boolean): Promise<unknown>;
-export function setReady(roomId: string, telegramId: number, ready: boolean): Promise<unknown>;
 export function toPublicRoom(room: unknown, telegramId?: number): unknown;
 `,
   'server-bundle/bot.d.ts': `export function handleTelegramWebhook(update: unknown): Promise<void>;
