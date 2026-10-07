@@ -1,13 +1,22 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { fail, getInitData, handleOptions, ok, readJson } from '../../server/http';
-import { createRoom, toPublicRoom } from '../../server/rooms';
-import { displayName, isBotSecret, validateInitData } from '../../server/telegramAuth';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (handleOptions(req, res)) return;
-  if (req.method !== 'POST') return fail(res, 'Method not allowed', 405);
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Telegram-Init-Data');
+
+  if (req.method === 'OPTIONS') {
+    res.status(204).end();
+    return;
+  }
 
   try {
+    const { fail, getInitData, ok, readJson } = await import('../../server/http');
+    const { createRoom, toPublicRoom } = await import('../../server/rooms');
+    const { displayName, isBotSecret, validateInitData } = await import('../../server/telegramAuth');
+
+    if (req.method !== 'POST') return fail(res, 'Method not allowed', 405);
+
     if (!process.env.BOT_TOKEN) {
       return fail(res, 'Server misconfigured: BOT_TOKEN missing on Vercel', 500);
     }
@@ -53,6 +62,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return ok(res, { room: toPublicRoom(room, telegramIdForPublic) }, 201);
   } catch (e) {
     console.error('POST /api/rooms', e);
-    return fail(res, e, 500);
+    const message = e instanceof Error ? `${e.message}` : String(e);
+    const stack = e instanceof Error ? e.stack : undefined;
+    if (!res.headersSent) {
+      res.status(500).json({ error: message, stack });
+    }
   }
 }

@@ -1,65 +1,68 @@
-import { Redis } from '@upstash/redis';
+/** Upstash Redis via REST (no SDK — avoids ESM/CJS crashes on Vercel). */
 
-let redis: Redis | null | undefined;
 const memory = new Map<string, string>();
 
-export function getRedis(): Redis | null {
-  if (redis !== undefined) return redis;
+function creds(): { url: string; token: string } | null {
   const url = process.env.UPSTASH_REDIS_REST_URL;
   const token = process.env.UPSTASH_REDIS_REST_TOKEN;
-  if (!url || !token) {
-    redis = null;
-    return null;
+  if (!url || !token) return null;
+  return { url: url.replace(/\/$/, ''), token };
+}
+
+async function upstash(command: (string | number)[]): Promise<unknown> {
+  const c = creds();
+  if (!c) return null;
+  const res = await fetch(c.url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${c.token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(command),
+  });
+  const data = (await res.json()) as { result?: unknown; error?: string };
+  if (!res.ok || data.error) {
+    throw new Error(data.error || `Upstash HTTP ${res.status}`);
   }
-  try {
-    redis = new Redis({ url, token });
-  } catch (e) {
-    console.error('Redis init failed', e);
-    redis = null;
-  }
-  return redis;
+  return data.result;
 }
 
 export async function kvGet(key: string): Promise<string | null> {
-  const r = getRedis();
-  if (r) {
-    try {
-      const v = await r.get<string>(key);
-      return typeof v === 'string' ? v : v == null ? null : JSON.stringify(v);
-    } catch (e) {
-      console.error('kvGet', key, e);
-      throw new Error('Redis read failed — check UPSTASH_REDIS_REST_URL / TOKEN on Vercel');
-    }
+  if (!creds()) return memory.get(key) ?? null;
+  try {
+    const result = await upstash(['GET', key]);
+    if (result == null) return null;
+    return typeof result === 'string' ? result : JSON.stringify(result);
+  } catch (e) {
+    console.error('kvGet', key, e);
+    throw new Error('Redis read failed — check UPSTASH_REDIS_REST_URL / TOKEN on Vercel');
   }
-  return memory.get(key) ?? null;
 }
 
 export async function kvSet(key: string, value: string, exSeconds?: number): Promise<void> {
-  const r = getRedis();
-  if (r) {
-    try {
-      if (exSeconds) await r.set(key, value, { ex: exSeconds });
-      else await r.set(key, value);
-      return;
-    } catch (e) {
-      console.error('kvSet', key, e);
-      throw new Error('Redis write failed — check UPSTASH_REDIS_REST_URL / TOKEN on Vercel');
-    }
+  if (!creds()) {
+    console.warn('Redis not configured; using in-memory store (not durable on Vercel)');
+    memory.set(key, value);
+    return;
   }
-  console.warn('Redis not configured; using in-memory store (not durable on Vercel)');
-  memory.set(key, value);
+  try {
+    if (exSeconds) await upstash(['SET', key, value, 'EX', exSeconds]);
+    else await upstash(['SET', key, value]);
+  } catch (e) {
+    console.error('kvSet', key, e);
+    throw new Error('Redis write failed — check UPSTASH_REDIS_REST_URL / TOKEN on Vercel');
+  }
 }
 
 export async function kvDel(key: string): Promise<void> {
-  const r = getRedis();
-  if (r) {
-    try {
-      await r.del(key);
-      return;
-    } catch (e) {
-      console.error('kvDel', key, e);
-      throw new Error('Redis delete failed');
-    }
+  if (!creds()) {
+    memory.delete(key);
+    return;
   }
-  memory.delete(key);
+  try {
+    await upstash(['DEL', key]);
+  } catch (e) {
+    console.error('kvDel', key, e);
+    throw new Error('Redis delete failed');
+  }
 }

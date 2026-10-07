@@ -1,14 +1,4 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { fail, getInitData, handleOptions, ok, readJson } from '../../server/http';
-import {
-  applyRoomAction,
-  getRoom,
-  joinRoom,
-  setReady,
-  startRoom,
-  toPublicRoom,
-} from '../../server/rooms';
-import { displayName, validateInitData } from '../../server/telegramAuth';
 
 function parsePath(query: VercelRequest['query']): { id: string; action?: string } {
   const raw = query.path;
@@ -17,13 +7,25 @@ function parsePath(query: VercelRequest['query']): { id: string; action?: string
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (handleOptions(req, res)) return;
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Telegram-Init-Data');
 
-  const { id, action } = parsePath(req.query);
-  if (!id) return fail(res, 'Room id required', 400);
+  if (req.method === 'OPTIONS') {
+    res.status(204).end();
+    return;
+  }
 
   try {
-    // GET /api/rooms/:id
+    const { fail, getInitData, ok, readJson } = await import('../../server/http');
+    const { applyRoomAction, getRoom, joinRoom, setReady, startRoom, toPublicRoom } = await import(
+      '../../server/rooms'
+    );
+    const { displayName, validateInitData } = await import('../../server/telegramAuth');
+
+    const { id, action } = parsePath(req.query);
+    if (!id) return fail(res, 'Room id required', 400);
+
     if (req.method === 'GET' && !action) {
       const room = await getRoom(id);
       if (!room) return fail(res, 'Room not found', 404);
@@ -77,8 +79,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     return fail(res, 'Unknown action', 404);
   } catch (e) {
+    console.error('rooms path', e);
     const msg = e instanceof Error ? e.message : String(e);
-    const status = msg.includes('not found') ? 404 : msg.includes('Unauthorized') || msg.includes('signature') ? 401 : 400;
-    return fail(res, e, status);
+    const status = msg.includes('not found')
+      ? 404
+      : msg.includes('signature') || msg.includes('Missing') || msg.includes('expired')
+        ? 401
+        : 500;
+    if (!res.headersSent) {
+      res.status(status).json({ error: msg, stack: e instanceof Error ? e.stack : undefined });
+    }
   }
 }
