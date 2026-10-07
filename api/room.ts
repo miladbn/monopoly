@@ -1,6 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { channelGate } from '../server/channels';
 
 function cors(res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -131,6 +130,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         /* optional on poll */
       }
       if (telegramId !== undefined) {
+        const { channelGate } = await import('../server/channels');
         const gate = await channelGate(telegramId);
         if (gate) return json(res, 403, gate);
       }
@@ -143,6 +143,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!action) return json(res, 400, { error: 'Action required (join|ready|start|action)' });
 
     const user = validateInitData(getInitData(req, body));
+    const { channelGate } = await import('../server/channels');
     const gate = await channelGate(user.id);
     if (gate) return json(res, 403, gate);
     const name = displayName(user);

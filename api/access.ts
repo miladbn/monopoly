@@ -1,10 +1,8 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { channelGate, welcomeBody, welcomeComment } from '../server/channels';
-import { fail, getInitData, handleOptions, ok } from '../server/http';
-import { validateInitData } from '../server/telegramAuth';
 
 /** Membership check for the Mini App. Players must join REQUIRED_CHANNELS before playing. */
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  const { fail, getInitData, handleOptions, ok } = await import('../server/http');
   if (handleOptions(req, res)) return;
   if (req.method !== 'GET' && req.method !== 'POST') {
     fail(res, 'Method not allowed', 405);
@@ -12,6 +10,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
+    const { validateInitData } = await import('../server/telegramAuth');
+    const { channelGate, welcomeBody, welcomeComment } = await import('../server/channels');
     const user = validateInitData(getInitData(req)).user;
     const gate = await channelGate(user.id);
     if (gate) {
