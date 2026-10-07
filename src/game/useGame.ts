@@ -25,18 +25,9 @@ import {
   reclaimBuildings,
   rentFor,
 } from './engine';
-import {
-  aiAcceptsTrade,
-  aiAuctionCap,
-  aiBuildTargets,
-  aiUnmortgageTargets,
-  aiWantsBuy as aiWantsBuyPolicy,
-  type AiDifficulty,
-} from './ai';
 import { elCenter, fx } from './fx';
-import type { PlayerAppearance } from './playerProfile';
-import { canSaveGame, clearSoloSave, hasSoloSave, readSoloSave, writeSoloSave } from './persist';
 import { makeRng } from './rng';
+import type { PlayerAppearance } from './playerProfile';
 import { canManageProperties, unmortgageCost } from './rules';
 import { dailySeed, saveDailyScore, todayKey } from './settings';
 import { sfx } from './sfx';
@@ -95,7 +86,6 @@ export function useGame() {
   const heldGetOut = useRef<HeldGetOut[]>([]);
   const rng = useRef<() => number>(() => Math.random());
   const dailyMode = useRef(false);
-  const difficulty = useRef<AiDifficulty>('normal');
   const lastBuy = useRef<{ space: number; price: number; at: number } | null>(null);
   const undoTimer = useRef<number | null>(null);
   const [undoUntil, setUndoUntil] = useState(0);
@@ -595,16 +585,33 @@ export function useGame() {
     return true;
   }, [log, sync]);
 
+  function aiValue(p: Player, i: number): number {
+    const g = S();
+    const sp = SPACES[i];
+    let v = sp.price!;
+    if (sp.group) {
+      const owned = GROUP_MEMBERS[sp.group].filter((x) => g.props[x].owner === p.id).length;
+      const total = GROUP_MEMBERS[sp.group].length;
+      if (owned === total - 1) v *= 1.75;
+      else if (owned > 0) v *= 1.3;
+      const rivals = GROUP_MEMBERS[sp.group].filter((x) => g.props[x].owner !== null && g.props[x].owner !== p.id).length;
+      if (rivals === total - 1) v *= 1.25; // block the rival
+    }
+    return Math.round(v);
+  }
+
   function aiWantsBuy(p: Player, i: number): boolean {
-    return aiWantsBuyPolicy(S(), p, i, difficulty.current);
+    const sp = SPACES[i];
+    const value = aiValue(p, i);
+    const reserve = S().round < 4 ? 40 : 160;
+    if (p.cash - sp.price! < reserve) return value > sp.price! * 1.5 && p.cash >= sp.price!;
+    return value >= sp.price!;
   }
 
   async function runAuction(i: number) {
     const g = S();
     const active = g.players.map((p) => !p.bankrupt);
-    const caps = g.players.map((p) =>
-      p.human ? 0 : aiAuctionCap(g, p, i, rng.current, difficulty.current),
-    );
+    const caps = g.players.map((p) => (p.human ? 0 : Math.min(p.cash, Math.round(aiValue(p, i) * (0.55 + rng.current() * 0.4)))));
     let bid = 0;
     let high: number | null = null;
     let cur = 0;
@@ -764,8 +771,9 @@ export function useGame() {
     const g = S();
     let guard = 0;
     while (guard++ < 20) {
-      const options = aiBuildTargets(g, p, difficulty.current);
+      const options = playerProps(g, p.id).filter((i) => canBuild(g, i) && p.cash - (SPACES[i].houseCost || 0) > 180);
       if (!options.length) break;
+      options.sort((a, b) => (SPACES[b].rents![1] || 0) - (SPACES[a].rents![1] || 0));
       const i = options[0];
       p.cash -= SPACES[i].houseCost!;
       applyBuild(g, i);
@@ -775,29 +783,23 @@ export function useGame() {
       sync();
       await sleep(550);
     }
-    for (const i of aiUnmortgageTargets(g, p, difficulty.current)) {
+    // unmortgage when rich
+    for (const i of playerProps(g, p.id)) {
       const st = g.props[i];
-      const cost = unmortgageCost(SPACES[i].price!);
-      if (!st.mortgaged || p.cash < cost) continue;
-      p.cash -= cost;
-      st.mortgaged = false;
-      log(`${p.name} lifts the mortgage on ${SPACES[i].short}.`, p.color);
-      sync();
-      await sleep(400);
+      const cost = Math.round((SPACES[i].price! / 2) * 1.1);
+      if (st.mortgaged && p.cash - cost > 400) {
+        p.cash -= cost;
+        st.mortgaged = false;
+        log(`${p.name} lifts the mortgage on ${SPACES[i].short}.`, p.color);
+        sync();
+        await sleep(400);
+      }
     }
   }
 
   /* ---------------- turn ---------------- */
   async function takeTurn(p: Player) {
     const g = S();
-    // Resume after save/load at a stable manage checkpoint.
-    if (g.phase === 'manage') {
-      if (p.human) {
-        sync();
-        await waitFor('endturn');
-      }
-      return;
-    }
     g.doubles = 0;
     let again = true;
     while (again) {
@@ -848,25 +850,8 @@ export function useGame() {
     };
   }
 
-  function persistCheckpoint() {
-    const g = S();
-    if (!canSaveGame(g)) return;
-    writeSoloSave({
-      version: 1,
-      savedAt: new Date().toISOString(),
-      game: JSON.parse(JSON.stringify(g)) as Game,
-      chanceDeck: [...chanceDeck.current],
-      chestDeck: [...chestDeck.current],
-      heldGetOut: heldGetOut.current.map((h) => ({ ...h })),
-      logId: logId.current,
-      difficulty: difficulty.current,
-      dailyMode: dailyMode.current,
-    });
-  }
-
   function endGame(won: boolean, winnerId: number | null) {
     const g = S();
-    clearSoloSave();
     g.phase = 'over';
     g.winner = winnerId;
     const hs = computeScore(won);
@@ -916,7 +901,6 @@ export function useGame() {
           if (p.human) {
             g.phase = 'manage';
             sync();
-            persistCheckpoint();
             await waitFor('endturn');
           } else {
             await sleep(1100);
@@ -935,11 +919,10 @@ export function useGame() {
   }
 
   /* ---------------- public actions ---------------- */
-  const start = useCallback((name: string, opponents: number, look?: PlayerAppearance, opts?: { daily?: boolean; difficulty?: AiDifficulty }) => {
+  const start = useCallback((name: string, opponents: number, look?: PlayerAppearance, opts?: { daily?: boolean }) => {
     gen.current++;
     if (pending.current) pending.current.reject(new Abort());
     dailyMode.current = !!opts?.daily;
-    difficulty.current = opts?.difficulty || 'normal';
     rng.current = opts?.daily ? makeRng(dailySeed()) : () => Math.random();
     heldGetOut.current = [];
     chanceDeck.current = shuffleIndices(16, rng.current);
@@ -951,7 +934,6 @@ export function useGame() {
       undoTimer.current = null;
     }
     setUndoUntil(0);
-    clearSoloSave();
     G.current = newGame(name, opponents, look);
     if (opts?.daily) {
       G.current.log = [{ id: 1, text: `Daily challenge ${todayKey()} — same seed for everyone today.`, color: '#e9c46a' }];
@@ -960,41 +942,6 @@ export function useGame() {
     setLastScore(null);
     sync();
     setTimeout(() => void turnLoop(), 60);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const saveGame = useCallback((): boolean => {
-    const g = G.current;
-    if (!canSaveGame(g)) return false;
-    persistCheckpoint();
-    return true;
-  }, []);
-
-  const loadGame = useCallback((): boolean => {
-    const blob = readSoloSave();
-    if (!blob) return false;
-    gen.current++;
-    if (pending.current) pending.current.reject(new Abort());
-    G.current = blob.game;
-    G.current.paused = false;
-    chanceDeck.current = blob.chanceDeck || [];
-    chestDeck.current = blob.chestDeck || [];
-    heldGetOut.current = blob.heldGetOut || [];
-    logId.current = blob.logId || 2;
-    difficulty.current = blob.difficulty || 'normal';
-    dailyMode.current = !!blob.dailyMode;
-    rng.current = () => Math.random();
-    lastBuy.current = null;
-    if (undoTimer.current) {
-      window.clearTimeout(undoTimer.current);
-      undoTimer.current = null;
-    }
-    setUndoUntil(0);
-    paused.current = false;
-    setLastScore(null);
-    sync();
-    setTimeout(() => void turnLoop(), 60);
-    return true;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1019,7 +966,6 @@ export function useGame() {
     if (!g.started || g.phase === 'over' || g.phase === 'menu') return;
     paused.current = !paused.current;
     g.paused = paused.current;
-    if (paused.current) persistCheckpoint();
     sync();
   }, [sync]);
 
@@ -1092,6 +1038,24 @@ export function useGame() {
   );
 
   /* ---------------- trading ---------------- */
+  function stratWorth(props: Game['props'], pid: number): number {
+    let v = 0;
+    for (const sp of SPACES) {
+      if (!sp.price) continue;
+      const st = props[sp.i];
+      if (st.owner !== pid) continue;
+      let m = 1;
+      if (sp.group) {
+        const owned = GROUP_MEMBERS[sp.group].filter((x) => props[x].owner === pid).length;
+        const total = GROUP_MEMBERS[sp.group].length;
+        m = owned === total ? 2.4 : owned === total - 1 ? 1.25 : 1;
+      }
+      v += (st.mortgaged ? sp.price / 2 : sp.price) * m;
+      v += st.houses * (sp.houseCost || 0);
+    }
+    return v;
+  }
+
   /** human offers: `give` (human -> rival), `get` (rival -> human), cash > 0 = human pays rival */
   const proposeTrade = useCallback(
     (rival: number, give: number[], get: number[], cash: number): { ok: boolean; msg: string } => {
@@ -1105,7 +1069,16 @@ export function useGame() {
       if ([...give, ...get].some((i) => g.props[i].houses > 0))
         return { ok: false, msg: 'Sell buildings before trading that set.' };
 
-      const accepted = aiAcceptsTrade(g, rival, 0, give, get, cash, difficulty.current);
+      const before = stratWorth(g.props, rival);
+      const hBefore = stratWorth(g.props, 0);
+      const sim: Game['props'] = {};
+      for (const k of Object.keys(g.props)) sim[+k] = { ...g.props[+k] };
+      give.forEach((i) => (sim[i].owner = rival));
+      get.forEach((i) => (sim[i].owner = 0));
+      const aiDelta = stratWorth(sim, rival) - before + cash;
+      const hDelta = stratWorth(sim, 0) - hBefore - cash;
+
+      const accepted = aiDelta > 20 && aiDelta >= hDelta * 0.75;
       if (!accepted) {
         log(`${ai.name} rejects your offer.`, '#ff8f8f');
         sfx.pay();
@@ -1162,10 +1135,5 @@ export function useGame() {
     undoBuy,
     canUndoBuy: undoUntil > Date.now() && !!lastBuy.current,
     isDaily: dailyMode.current,
-    difficulty: difficulty.current,
-    saveGame,
-    loadGame,
-    canSave: canSaveGame(G.current),
-    hasSave: hasSoloSave(),
   };
 }

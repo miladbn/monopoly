@@ -57,8 +57,6 @@ export interface Room {
   seatMap: Record<number, number>;
   reactions?: RoomReaction[];
   series?: RoomSeries;
-  /** Recent client action ids for idempotent retries (MP). */
-  recentActionIds?: string[];
 }
 
 export interface PublicRoom {

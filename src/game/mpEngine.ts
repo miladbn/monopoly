@@ -26,19 +26,9 @@ import {
   rentFor,
 } from './engine';
 
-import {
-  aiAcceptsTrade,
-  aiAuctionCap,
-  aiBuildTargets,
-  aiUnmortgageTargets,
-  aiWantsBuy as aiWantsBuyPolicy,
-  type AiDifficulty,
-} from './ai';
 import { canRespondToTrade, unmortgageCost } from './rules';
 import { makeRng } from './rng';
 export { makeRng };
-
-const MP_AI_DIFFICULTY: AiDifficulty = 'normal';
 
 export interface MpRuntime {
   game: Game;
@@ -87,6 +77,26 @@ export type MpActionType =
 export interface MpAction {
   type: MpActionType;
   payload?: unknown;
+}
+
+function stratWorth(props: Game['props'], pid: number): number {
+  let v = 0;
+  for (const key of Object.keys(props)) {
+    const i = +key;
+    const st = props[i];
+    if (st.owner !== pid) continue;
+    const sp = SPACES[i];
+    if (!sp.price) continue;
+    let m = 1;
+    if (sp.group) {
+      const owned = GROUP_MEMBERS[sp.group].filter((x) => props[x].owner === pid).length;
+      const total = GROUP_MEMBERS[sp.group].length;
+      m = owned === total ? 2.4 : owned === total - 1 ? 1.25 : 1;
+    }
+    v += (st.mortgaged ? sp.price / 2 : sp.price) * m;
+    v += st.houses * (sp.houseCost || 0);
+  }
+  return v;
 }
 
 function applyTradeDeal(
@@ -269,8 +279,27 @@ function doBuy(rt: MpRuntime, p: Player, i: number): boolean {
   return true;
 }
 
+function aiValue(rt: MpRuntime, p: Player, i: number): number {
+  const g = rt.game;
+  const sp = SPACES[i];
+  let v = sp.price!;
+  if (sp.group) {
+    const owned = GROUP_MEMBERS[sp.group].filter((x) => g.props[x].owner === p.id).length;
+    const total = GROUP_MEMBERS[sp.group].length;
+    if (owned === total - 1) v *= 1.75;
+    else if (owned > 0) v *= 1.3;
+    const rivals = GROUP_MEMBERS[sp.group].filter((x) => g.props[x].owner !== null && g.props[x].owner !== p.id).length;
+    if (rivals === total - 1) v *= 1.25;
+  }
+  return Math.round(v);
+}
+
 function aiWantsBuy(rt: MpRuntime, p: Player, i: number): boolean {
-  return aiWantsBuyPolicy(rt.game, p, i, MP_AI_DIFFICULTY);
+  const sp = SPACES[i];
+  const value = aiValue(rt, p, i);
+  const reserve = rt.game.round < 4 ? 40 : 160;
+  if (p.cash - sp.price! < reserve) return value > sp.price! * 1.5 && p.cash >= sp.price!;
+  return value >= sp.price!;
 }
 
 function applyCardEffects(rt: MpRuntime, p: Player, card: Card, diceTotal: number, deck?: 'CHANCE' | 'CHEST') {
@@ -489,7 +518,7 @@ function runAuctionAiUntilHuman(rt: MpRuntime) {
       return;
     }
     const next = a.price;
-    const cap = aiAuctionCap(rt.game, p, a.space, rng, MP_AI_DIFFICULTY);
+    const cap = Math.min(p.cash, Math.round(aiValue(rt, p, a.space) * (0.55 + rng() * 0.4)));
     if (next <= cap && p.cash >= next) {
       acceptBid(rt, a.current, next);
     } else {
@@ -728,24 +757,22 @@ function aiDevelop(rt: MpRuntime, p: Player) {
   const g = rt.game;
   let guard = 0;
   while (guard++ < 20) {
-    const options = aiBuildTargets(g, p, MP_AI_DIFFICULTY);
+    const options = playerProps(g, p.id).filter((i) => canBuild(g, i) && p.cash - (SPACES[i].houseCost || 0) > 180);
     if (!options.length) break;
-    const i = options[0];
-    p.cash -= SPACES[i].houseCost!;
-    applyBuild(g, i);
-    pushLog(
-      rt,
-      `${p.name} builds on ${SPACES[i].short} (${g.props[i].houses === 5 ? 'HOTEL' : g.props[i].houses + ' house'}).`,
-      p.color,
-    );
+    options.sort((a, b) => (SPACES[b].rents![1] || 0) - (SPACES[a].rents![1] || 0));
+      const i = options[0];
+      p.cash -= SPACES[i].houseCost!;
+      applyBuild(g, i);
+      pushLog(rt, `${p.name} builds on ${SPACES[i].short} (${g.props[i].houses === 5 ? 'HOTEL' : g.props[i].houses + ' house'}).`, p.color);
   }
-  for (const i of aiUnmortgageTargets(g, p, MP_AI_DIFFICULTY)) {
+  for (const i of playerProps(g, p.id)) {
     const st = g.props[i];
-    const cost = unmortgageCost(SPACES[i].price!);
-    if (!st.mortgaged || p.cash < cost) continue;
-    p.cash -= cost;
-    st.mortgaged = false;
-    pushLog(rt, `${p.name} lifts the mortgage on ${SPACES[i].short}.`, p.color);
+    const cost = Math.round((SPACES[i].price! / 2) * 1.1);
+    if (st.mortgaged && p.cash - cost > 400) {
+      p.cash -= cost;
+      st.mortgaged = false;
+      pushLog(rt, `${p.name} lifts the mortgage on ${SPACES[i].short}.`, p.color);
+    }
   }
 }
 
@@ -998,7 +1025,15 @@ export function applyAction(rt: MpRuntime, seat: number, action: MpAction): MpRu
       if (get.some((i) => g.props[i]?.owner !== to)) throw new Error('Rival does not own those deeds');
 
       if (!rival.human) {
-        const accepted = aiAcceptsTrade(g, to, seat, give, get, cash, MP_AI_DIFFICULTY);
+        const before = stratWorth(g.props, to);
+        const hBefore = stratWorth(g.props, seat);
+        const sim: Game['props'] = {};
+        for (const k of Object.keys(g.props)) sim[+k] = { ...g.props[+k] };
+        give.forEach((i) => (sim[i].owner = to));
+        get.forEach((i) => (sim[i].owner = seat));
+        const aiDelta = stratWorth(sim, to) - before + cash;
+        const hDelta = stratWorth(sim, seat) - hBefore - cash;
+        const accepted = aiDelta > 20 && aiDelta >= hDelta * 0.75;
         if (!accepted) {
           pushLog(rt, `${rival.name} rejects the trade.`, '#ff8f8f');
           break;

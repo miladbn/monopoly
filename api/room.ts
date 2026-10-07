@@ -282,7 +282,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const room = await applyRoomAction(roomId, user.id, {
         type: String(body.type),
         payload: body.payload,
-        clientActionId: body.clientActionId ? String(body.clientActionId) : undefined,
       });
       return json(res, 200, { room: publicRoom(room as unknown as Record<string, unknown>, user.id) });
     }

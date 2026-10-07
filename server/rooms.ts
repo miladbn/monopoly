@@ -401,7 +401,7 @@ export async function postReaction(
 export async function applyRoomAction(
   id: string,
   telegramId: number,
-  action: { type: string; payload?: unknown; clientActionId?: string },
+  action: { type: string; payload?: unknown },
 ): Promise<Room> {
   return withRoomLock(id, async () => {
     const room = await getRoom(id);
@@ -412,22 +412,7 @@ export async function applyRoomAction(
     if (!seatEntry) throw new Error('Spectators cannot play — watch only');
     const seat = Number(seatEntry[0]);
 
-    const cid = action.clientActionId ? String(action.clientActionId).slice(0, 80) : '';
-    if (cid) {
-      const recent = room.recentActionIds || [];
-      if (recent.includes(cid)) {
-        // Idempotent replay — return current room without re-applying.
-        return room;
-      }
-    }
-
-    room.runtime = applyAction(room.runtime as never, seat, {
-      type: action.type,
-      payload: action.payload,
-    } as never) as unknown as RoomRuntime;
-    if (cid) {
-      room.recentActionIds = [...(room.recentActionIds || []), cid].slice(-40);
-    }
+    room.runtime = applyAction(room.runtime as never, seat, action as never) as unknown as RoomRuntime;
     if (room.runtime.game.phase === 'over') {
       room.status = 'ended';
       recordSeriesWin(room);
