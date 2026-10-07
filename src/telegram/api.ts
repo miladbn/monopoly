@@ -34,10 +34,27 @@ async function request<T>(path: string, opts: RequestInit & { initData?: string 
     headers['X-Telegram-Init-Data'] = initData;
   }
   const { initData: _i, ...rest } = opts;
-  const res = await fetch(path, { ...rest, headers });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error((data as { error?: string }).error || res.statusText);
-  return data as T;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 20000);
+  try {
+    const res = await fetch(path, { ...rest, headers, signal: ctrl.signal });
+    const text = await res.text();
+    let data: { error?: string } = {};
+    try {
+      data = text ? (JSON.parse(text) as { error?: string }) : {};
+    } catch {
+      throw new Error(res.ok ? 'Invalid server response' : `Server error ${res.status}. Redeploy and check Vercel env vars.`);
+    }
+    if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+    return data as T;
+  } catch (e) {
+    if (e instanceof Error && e.name === 'AbortError') {
+      throw new Error('Request timed out — API may be down. Check Vercel deployment & env vars.');
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export async function createRoom(): Promise<PublicRoom> {

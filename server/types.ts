@@ -1,6 +1,3 @@
-import type { Game } from '../src/game/engine';
-import type { MpRuntime } from '../src/game/mpEngine';
-
 export interface RoomPlayer {
   telegramId: number;
   name: string;
@@ -11,6 +8,16 @@ export interface RoomPlayer {
 
 export type RoomStatus = 'lobby' | 'playing' | 'ended';
 
+/** Opaque multiplayer runtime (serialized MpRuntime) */
+export type RoomRuntime = {
+  game: {
+    phase: string;
+    players: unknown[];
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+};
+
 export interface Room {
   id: string;
   chatId?: number;
@@ -20,9 +27,7 @@ export interface Room {
   maxPlayers: number;
   version: number;
   createdAt: number;
-  /** Filled once the match starts */
-  runtime: MpRuntime | null;
-  /** Seat index → telegramId for human seats; AI seats have no entry */
+  runtime: RoomRuntime | null;
   seatMap: Record<number, number>;
 }
 
@@ -35,7 +40,8 @@ export interface PublicRoom {
   maxPlayers: number;
   version: number;
   createdAt: number;
-  game: Game | null;
+  // Client treats this as Game
+  game: RoomRuntime['game'] | null;
   seatMap: Record<number, number>;
   mySeat?: number;
 }

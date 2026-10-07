@@ -1,5 +1,4 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import type { MpAction } from '../../src/game/mpEngine';
 import { fail, getInitData, handleOptions, ok, readJson } from '../../server/http';
 import {
   applyRoomAction,
@@ -72,8 +71,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (action === 'action') {
       if (!body.type) return fail(res, 'Action type required');
-      const mpAction: MpAction = { type: body.type as MpAction['type'], payload: body.payload };
-      const room = await applyRoomAction(id, v.user.id, mpAction);
+      const room = await applyRoomAction(id, v.user.id, { type: body.type, payload: body.payload });
       return ok(res, { room: toPublicRoom(room, v.user.id) });
     }
 

@@ -79,12 +79,10 @@ export function displayName(u: TelegramUser): string {
   return (n || u.username || `Player${u.id}`).slice(0, 14);
 }
 
-/** Allow bot-internal calls with shared secret header */
-export function assertBotSecret(header: string | string[] | undefined): void {
+/** True when request carries the bot token as a shared secret */
+export function isBotSecret(header: string | string[] | undefined): boolean {
   const expected = process.env.BOT_TOKEN;
-  if (!expected) throw new Error('BOT_TOKEN missing');
+  if (!expected) return false;
   const got = Array.isArray(header) ? header[0] : header;
-  if (got !== `Bot ${expected}` && got !== expected) {
-    throw new Error('Unauthorized bot call');
-  }
+  return got === `Bot ${expected}` || got === expected;
 }

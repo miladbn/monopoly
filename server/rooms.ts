@@ -1,12 +1,17 @@
-import { applyAction, createRuntime, type MpAction } from '../src/game/mpEngine';
-import { TOKENS } from '../src/game/data';
 import { kvDel, kvGet, kvSet } from './redis';
-import type { Room, RoomPlayer } from './types';
+import type { Room, RoomPlayer, RoomRuntime } from './types';
 import { toPublicRoom } from './types';
 
 const ROOM_TTL = 60 * 60 * 24; // 24h
 const GROUP_KEY = (chatId: number) => `deco:group:${chatId}`;
 const ROOM_KEY = (id: string) => `deco:room:${id}`;
+
+const AI_TOKENS = [
+  { name: 'You' },
+  { name: 'Vivian Vex' },
+  { name: 'Rex Ruby' },
+  { name: 'Ada Sterling' },
+];
 
 function roomId(): string {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -106,6 +111,7 @@ export async function setReady(id: string, telegramId: number, ready: boolean): 
 }
 
 export async function startRoom(id: string, telegramId: number, fillAi = true): Promise<Room> {
+  const { createRuntime } = await import('../src/game/mpEngine');
   const room = await getRoom(id);
   if (!room) throw new Error('Room not found');
   if (room.status !== 'lobby') throw new Error('Already started');
@@ -118,18 +124,15 @@ export async function startRoom(id: string, telegramId: number, fillAi = true): 
     human: true,
   }));
 
-  // Fill empty seats with AI up to maxPlayers (2–4)
   const finalCount = fillAi
     ? Math.max(2, Math.min(4, room.maxPlayers))
     : Math.max(2, Math.min(4, room.players.length));
   while (seats.length < finalCount) {
-    const t = TOKENS[seats.length];
-    seats.push({ name: t.name, human: false });
+    seats.push({ name: AI_TOKENS[seats.length]?.name || `AI ${seats.length}`, human: false });
   }
 
-  room.runtime = createRuntime(seats);
+  room.runtime = createRuntime(seats) as unknown as RoomRuntime;
   room.status = 'playing';
-  // Rebuild seatMap for humans only
   room.seatMap = {};
   room.players.forEach((p, i) => {
     p.seat = i;
@@ -142,8 +145,9 @@ export async function startRoom(id: string, telegramId: number, fillAi = true): 
 export async function applyRoomAction(
   id: string,
   telegramId: number,
-  action: MpAction,
+  action: { type: string; payload?: unknown },
 ): Promise<Room> {
+  const { applyAction } = await import('../src/game/mpEngine');
   const room = await getRoom(id);
   if (!room) throw new Error('Room not found');
   if (room.status !== 'playing' || !room.runtime) throw new Error('Game not in progress');
@@ -152,7 +156,7 @@ export async function applyRoomAction(
   if (!seatEntry) throw new Error('You are not in this game');
   const seat = Number(seatEntry[0]);
 
-  room.runtime = applyAction(room.runtime, seat, action);
+  room.runtime = applyAction(room.runtime as never, seat, action as never) as unknown as RoomRuntime;
   if (room.runtime.game.phase === 'over') room.status = 'ended';
   await save(room);
   return room;

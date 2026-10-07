@@ -89,10 +89,12 @@ export function useGame() {
   }, []);
 
   /* ---------------- timing ---------------- */
+  /** speed 1 = normal, 2 = twice as fast. AI pacing uses longer base delays. */
   const sleep = (ms: number) =>
     new Promise<void>((res, rej) => {
       const start = gen.current;
-      let left = ms * speed.current;
+      const pace = Math.max(0.35, speed.current || 1);
+      let left = ms / pace;
       const t = setInterval(() => {
         if (gen.current !== start) {
           clearInterval(t);
@@ -316,7 +318,7 @@ export function useGame() {
     });
     log(`${p.name} draws ${deck === 'CHANCE' ? 'Chance' : 'Community Chest'}: ${card.text}`, '#8fd3f4');
     if (p.human) await waitFor('ack', 6000);
-    else await sleep(1500);
+    else await sleep(2800);
     g.card = null;
     sync();
     await applyCard(p, card, diceTotal);
@@ -460,7 +462,7 @@ export function useGame() {
       log(`${p.name} declines ${sp.short} — going to auction!`, '#ffd166');
       await runAuction(i);
     } else {
-      await sleep(600);
+      await sleep(1400);
       if (aiWantsBuy(p, i)) doBuy(p, i);
       else {
         log(`${p.name} declines ${sp.short} — auction time!`, '#ffd166');
@@ -552,7 +554,7 @@ export function useGame() {
           a.message = `${p.name} drops out`;
         }
       } else {
-        await sleep(520);
+        await sleep(1100);
         if (next <= caps[cur] && p.cash >= next) {
           bid = next;
           high = cur;
@@ -566,7 +568,7 @@ export function useGame() {
       sync();
       cur = (cur + 1) % g.players.length;
     }
-    await sleep(500);
+    await sleep(900);
     g.auction = null;
     if (high !== null) {
       const w = g.players[high];
@@ -607,7 +609,7 @@ export function useGame() {
         return true;
       }
     } else {
-      await sleep(500);
+      await sleep(1200);
       if (p.getOut > 0) {
         p.getOut--;
         p.inJail = false;
@@ -683,7 +685,7 @@ export function useGame() {
       const c = atSpace(i);
       fx.burst(c.x, c.y, { count: 10, colors: ['#7ee787', '#2fa85b'], speed: 4, size: 4 });
       sync();
-      await sleep(260);
+      await sleep(550);
     }
     // unmortgage when rich
     for (const i of playerProps(g, p.id)) {
@@ -694,7 +696,7 @@ export function useGame() {
         st.mortgaged = false;
         log(`${p.name} lifts the mortgage on ${SPACES[i].short}.`, p.color);
         sync();
-        await sleep(160);
+        await sleep(400);
       }
     }
   }
@@ -714,7 +716,7 @@ export function useGame() {
       g.phase = p.human ? 'roll' : 'ai';
       sync();
       if (p.human) await waitFor('roll');
-      else await sleep(600);
+      else await sleep(1600);
       const d = await rollDiceAnim(p);
       if (d[0] === d[1]) {
         g.doubles++;
@@ -731,7 +733,7 @@ export function useGame() {
       if (p.inJail) return;
       if (again) {
         log(`${p.name} rolls again (doubles).`, '#e9c46a');
-        await sleep(400);
+        await sleep(900);
       }
     }
   }
@@ -796,7 +798,7 @@ export function useGame() {
             sync();
             await waitFor('endturn');
           } else {
-            await sleep(400);
+            await sleep(1100);
           }
         }
         let guard = 0;

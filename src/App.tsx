@@ -233,7 +233,7 @@ export default function App() {
                 {mode !== 'mp' && (
                   <button
                     className="btn btn-dark px-2.5 py-2 text-[11px]"
-                    onClick={() => solo.setSpeed(solo.speed === 1 ? 0.45 : 1)}
+                    onClick={() => solo.setSpeed(solo.speed === 1 ? 2 : 1)}
                     title="Toggle game speed"
                   >
                     {solo.speed === 1 ? '⏩ 1×' : '⏩ 2×'}
